@@ -1,0 +1,31 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rentals-agents-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
+  app:
+    build: .
+    image: rentals-agents
+    container_name: rentals-agents
+    depends_on:
+      - ollama
+    environment:
+      MOCK_LLM: "1"
+      OLLAMA_BASE_URL: "http://ollama:11434"
+    command: ["python", "main.py"]
+    volumes:
+      - ./data:/app/data
+
+  tests:
+    build: .
+    image: rentals-agents
+    container_name: rentals-agents-tests
+    command: ["python", "-m", "pytest", "-q"]
+
+volumes:
+  ollama-data:
