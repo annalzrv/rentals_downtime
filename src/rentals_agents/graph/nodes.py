@@ -44,13 +44,6 @@ from rentals_agents.rag import (
 )
 from rentals_agents.state import State
 
-import subprocess
-import tempfile
-import os
-import re
-import sys
-import pandas as pd
-
 _MSE_LINE_RE = re.compile(
     r"(?im)^\s*MSE:\s*([-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)"
 )
@@ -103,6 +96,7 @@ def _validate_submission_csv(path: Path) -> str | None:
 
     return None
 
+
 # ── 1. Data_Profiler ──────────────────────────────────────────────────────────
 
 def data_profiler_node(state: State) -> dict:
@@ -117,6 +111,7 @@ def data_profiler_node(state: State) -> dict:
     Mock: returns a static description of a plausible rental dataset.
     """
     if not config.MOCK_LLM:
+        import pandas as pd
 
         train_path = f"{config.DATA_DIR}/train.csv"
         df = pd.read_csv(train_path)
@@ -177,14 +172,7 @@ def rag_node(state: State) -> dict:
     Mock: returns a hardcoded, realistic feature plan.
     """
     if not config.MOCK_LLM:
-        user_msg = (
-            f"Dataset description:\n{state['df_info']}\n\n"
-            "Based on this dataset, suggest feature engineering ideas for "
-            "predicting rental price per night."
-        )
-    retrieval = retrieve_knowledge(state["df_info"])
-
-    if not MOCK_LLM:
+        retrieval = retrieve_knowledge(state["df_info"])
         user_msg = build_rag_user_message(state["df_info"], retrieval.context)
         try:
             raw = chat(config.LLM_MODEL, RAG_SYSTEM_PROMPT, user_msg)
@@ -194,7 +182,6 @@ def rag_node(state: State) -> dict:
             if not report.is_adequate:
                 ideas = generate_mock_feature_plan(state["df_info"])
         except (OllamaError, ValueError) as exc:
-            # Degrade gracefully: return a minimal fallback plan
             ideas = [f"[RAG error — using fallback] {exc}"]
             ideas.extend(generate_mock_feature_plan(state["df_info"]))
         return {"features_plan": ideas}
@@ -269,73 +256,10 @@ def executor_node(state: State) -> dict:
     new_iteration_count = state.get("iteration_count", 0) + 1
 
     if not config.MOCK_LLM:
-        code = state.get("generated_code", "")
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-            f.write(code)
-            script_path = f.name
-
-        try:
-            result = subprocess.run(
-                [sys.executable, script_path],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=os.getcwd()
-            )
-            stdout = result.stdout
-            stderr = result.stderr
-            execution_result = f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
-            execution_ok = (result.returncode == 0)
-
-            mse_match = re.search(r"MSE:\s*([\d.]+)", stdout)
-            if mse_match:
-                mse_value = float(mse_match.group(1))
-            else:
-                mse_value = None
-                execution_ok = False
-                execution_result += "\n[ERROR] MSE not found in output"
-
-            submission_path = "submission.csv"
-            if os.path.exists(submission_path):
-                df_sub = pd.read_csv(submission_path)
-                required_cols = ['index', 'prediction']
-                if not all(col in df_sub.columns for col in required_cols):
-                    execution_ok = False
-                    execution_result += "\n[ERROR] submission.csv missing required columns"
-                elif df_sub.isnull().any().any():
-                    execution_ok = False
-                    execution_result += "\n[ERROR] submission.csv contains NaN"
-            else:
-                execution_ok = False
-                execution_result += "\n[ERROR] submission.csv not found"
-
-            metrics = {"mse": mse_value} if mse_value is not None else {}
-
-        except subprocess.TimeoutExpired:
-            execution_result = "Timeout (60s) while running script"
-            execution_ok = False
-            metrics = {}
-        except Exception as e:
-            execution_result = f"Execution error: {e}"
-            execution_ok = False
-            metrics = {}
-        finally:
-            if os.path.exists(script_path):
-                os.unlink(script_path)
-
-        return {
-            "execution_result": execution_result,
-            "execution_ok": execution_ok,
-            "metrics": metrics,
-            "mse_history": [metrics.get("mse")] if metrics else [],
-            "iteration_count": new_iteration_count,
-            "supervisor_reasoning": "",
-    if not MOCK_LLM:
         generated_code = state.get("generated_code", "")
         if not generated_code.strip():
-            msg = "No generated code found."
             return {
-                "execution_result": msg,
+                "execution_result": "No generated code found.",
                 "execution_ok": False,
                 "metrics": {"mse": float("inf")},
                 "mse_history": [float("inf")],
@@ -371,17 +295,11 @@ def executor_node(state: State) -> dict:
         output = (result.stdout or "").strip()
         if result.stderr:
             stderr_part = (result.stderr or "").strip()
-            if output:
-                output = f"{output}\n--- stderr ---\n{stderr_part}"
-            else:
-                output = stderr_part
+            output = f"{output}\n--- stderr ---\n{stderr_part}" if output else stderr_part
 
-        mse = _extract_mse_from_output((result.stdout or ""))
+        mse = _extract_mse_from_output(result.stdout or "")
         is_mse_finite = math.isfinite(mse)
-        if not is_mse_finite:
-            mse_for_state = float("inf")
-        else:
-            mse_for_state = mse
+        mse_for_state = mse if is_mse_finite else float("inf")
 
         if result.returncode != 0:
             return {
@@ -439,9 +357,8 @@ def executor_node(state: State) -> dict:
         "execution_result": mock_stdout,
         "execution_ok": True,
         "metrics": metrics,
-        "mse_history": [mse_value],          # reducer appends this
+        "mse_history": [mse_value],
         "iteration_count": new_iteration_count,
-        "supervisor_reasoning": "",
     }
 
 
@@ -473,7 +390,6 @@ def supervisor_node(state: State) -> dict:
             next_node: str = parsed.get("next_node", "")
             reasoning: str = parsed.get("reasoning", "")
         except (OllamaError, ValueError) as exc:
-            # On parse failure, write empty next_node; guardrails will fall back.
             next_node = ""
             reasoning = f"[parse error: {exc}]"
         return {"next_node": next_node, "supervisor_reasoning": reasoning}

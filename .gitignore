@@ -24,6 +24,7 @@ myenv/
 # ── Generated artefacts ───────────────────────────────────────────────────────
 submission.csv
 experiment_log.json
+report.txt
 *.tmp
 agent_script.py
 data/chroma_db/
