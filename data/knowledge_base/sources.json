@@ -1,0 +1,27 @@
+{
+  "kaggle_rental_baseline.md": {
+    "title": "Kaggle Airbnb Rental Baseline",
+    "kind": "kaggle_notebook",
+    "url": "https://www.kaggle.com/code/gcdatkin/nyc-airbnb-availability-prediction"
+  },
+  "time_series_feature_engineering.md": {
+    "title": "Time Series Feature Engineering",
+    "kind": "scikit_example",
+    "url": "https://scikit-learn.org/stable/auto_examples/applications/plot_time_series_lagged_features.html"
+  },
+  "catboost_practical_notes.md": {
+    "title": "CatBoost Practical Notes",
+    "kind": "catboost_docs",
+    "url": "https://catboost.ai/docs/en/concepts/loss-functions"
+  },
+  "outliers_and_validation.md": {
+    "title": "Robust Scaling And Outlier Handling",
+    "kind": "sklearn_reference",
+    "url": "https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.RobustScaler.html"
+  },
+  "github_airbnb_baseline.md": {
+    "title": "GitHub NYC Airbnb Baseline",
+    "kind": "github_repository",
+    "url": "https://github.com/dasjyotishka/Predicting-Airbnb-Prices-in-New-York-City"
+  }
+}

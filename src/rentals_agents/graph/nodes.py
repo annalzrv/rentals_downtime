@@ -36,6 +36,12 @@ from rentals_agents.prompts.system import (
     RAG_SYSTEM_PROMPT,
     supervisor_system_prompt,
 )
+from rentals_agents.rag import (
+    build_rag_user_message,
+    evaluate_feature_plan,
+    generate_mock_feature_plan,
+    retrieve_knowledge,
+)
 from rentals_agents.state import State
 
 
@@ -113,32 +119,24 @@ def rag_node(state: State) -> dict:
 
     Mock: returns a hardcoded, realistic feature plan.
     """
+    retrieval = retrieve_knowledge(state["df_info"])
+
     if not MOCK_LLM:
-        user_msg = (
-            f"Dataset description:\n{state['df_info']}\n\n"
-            "Based on this dataset, suggest feature engineering ideas for "
-            "predicting rental price per night."
-        )
+        user_msg = build_rag_user_message(state["df_info"], retrieval.context)
         try:
             raw = chat(LLM_MODEL, RAG_SYSTEM_PROMPT, user_msg)
             parsed = parse_json_response(raw)
             ideas: list[str] = parsed.get("ideas", [])
+            report = evaluate_feature_plan(ideas)
+            if not report.is_adequate:
+                ideas = generate_mock_feature_plan(state["df_info"])
         except (OllamaError, ValueError) as exc:
             # Degrade gracefully: return a minimal fallback plan
             ideas = [f"[RAG error — using fallback] {exc}"]
+            ideas.extend(generate_mock_feature_plan(state["df_info"]))
         return {"features_plan": ideas}
 
-    mock_ideas = [
-        "borough_encoded: label-encode location_cluster (Manhattan=premium) — strongest single signal",
-        "log_sum: log1p(sum) — listed price is highly skewed, log reduces outlier impact",
-        "has_reviews: (amt_reviews > 0).astype(int) — listings with no reviews differ systematically",
-        "review_recency_days: days since last_dt (NaN → large sentinel like 9999) — stale listings differ",
-        "room_type_encoded: ordinal encode type_house (Entire > Private > Shared) — drives price tier",
-        "dist_to_manhattan_km: haversine(lat, lon, 40.7580, -73.9855) — proximity premium",
-        "host_portfolio_log: log1p(total_host) — super-hosts with many listings price differently",
-        "avg_reviews_filled: avg_reviews.fillna(0) — NaN means no reviews, not missing data",
-    ]
-    return {"features_plan": mock_ideas}
+    return {"features_plan": generate_mock_feature_plan(state["df_info"])}
 
 
 # ── 3. Coder_Agent ────────────────────────────────────────────────────────────

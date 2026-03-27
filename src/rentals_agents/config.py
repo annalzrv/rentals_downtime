@@ -31,6 +31,18 @@ OLLAMA_TIMEOUT: float = float(os.getenv("OLLAMA_TIMEOUT", "120.0"))
 # Override: DATA_DIR=/absolute/path python main.py
 DATA_DIR: str = os.getenv("DATA_DIR", "data")
 
+# ── RAG knowledge base ───────────────────────────────────────────────────────
+KNOWLEDGE_BASE_DIR: str = os.getenv("KNOWLEDGE_BASE_DIR", "data/knowledge_base")
+RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "3"))
+RAG_CHUNK_SIZE: int = int(os.getenv("RAG_CHUNK_SIZE", "900"))
+RAG_CHUNK_OVERLAP: int = int(os.getenv("RAG_CHUNK_OVERLAP", "120"))
+RAG_MAX_CONTEXT_CHARS: int = int(os.getenv("RAG_MAX_CONTEXT_CHARS", "4000"))
+RAG_RETRIEVER_BACKEND: str = os.getenv("RAG_RETRIEVER_BACKEND", "auto")
+RAG_EMBEDDING_BACKEND: str = os.getenv("RAG_EMBEDDING_BACKEND", "auto")
+RAG_EMBEDDING_CACHE_DIR: str = os.getenv("RAG_EMBEDDING_CACHE_DIR", ".cache/chroma")
+CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "data/chroma_db")
+CHROMA_COLLECTION_NAME: str = os.getenv("CHROMA_COLLECTION_NAME", "rentals_feature_ideas")
+
 # ── Development / CI mode ────────────────────────────────────────────────────
 # MOCK_LLM=1 (default): nodes return deterministic stubs — no Ollama needed.
 # MOCK_LLM=0: nodes call the real Ollama server.

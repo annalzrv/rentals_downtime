@@ -18,6 +18,9 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
 ]
+rag = [
+    "chromadb>=1.5.5",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
