@@ -17,6 +17,8 @@ import pytest
 # Must be set before importing config (module-level constant)
 os.environ["MOCK_LLM"] = "1"
 
+pytest.importorskip("langgraph")
+
 from rentals_agents.graph.builder import build_graph
 from rentals_agents.state import initial_state
 
