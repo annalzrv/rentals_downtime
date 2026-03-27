@@ -1,0 +1,6 @@
+=== Benchmark Report ===
+Total execution time: 0.01 seconds
+Total input tokens: 0
+Total output tokens: 0
+Total tokens: 0
+Final MSE: 4230.5
