@@ -64,6 +64,16 @@ pytest tests/ -v
 
 `MOCK_LLM=1` is the default. All tests pass without a running Ollama server.
 
+### 2.5. Install full vector-RAG stack
+
+```bash
+pip install -e ".[dev,rag]"
+```
+
+The vector backend uses ChromaDB. By default it tries Chroma + ONNX MiniLM
+(`all-MiniLM-L6-v2`) and falls back to lexical retrieval if the embedding model
+is unavailable.
+
 ### 3. Run with real models
 
 Install Ollama: https://ollama.com
@@ -91,6 +101,16 @@ All settings via environment variables (no `.env` file required):
 | `QWEN_CODER_MODEL` | `qwen2.5-coder:7b` | Model for Coder_Agent |
 | `LLM_MODEL` | `llama3:8b` | Model for RAG + Supervisor |
 | `OLLAMA_TIMEOUT` | `120.0` | Request timeout (seconds) |
+| `KNOWLEDGE_BASE_DIR` | `data/knowledge_base` | Local RAG corpus (`.md`/`.txt`) |
+| `RAG_TOP_K` | `3` | Number of retrieved chunks passed to RAG_Domain_Expert |
+| `RAG_CHUNK_SIZE` | `900` | Chunk size for local knowledge files |
+| `RAG_CHUNK_OVERLAP` | `120` | Overlap between adjacent chunks |
+| `RAG_MAX_CONTEXT_CHARS` | `4000` | Prompt budget for retrieved snippets |
+| `RAG_RETRIEVER_BACKEND` | `auto` | `auto`, `chroma`, or `lexical` |
+| `RAG_EMBEDDING_BACKEND` | `auto` | `auto`, `onnx_mini_lm`, or `hash` |
+| `RAG_EMBEDDING_CACHE_DIR` | `.cache/chroma` | Writable cache for ONNX MiniLM |
+| `CHROMA_PERSIST_DIR` | `data/chroma_db` | Persistent ChromaDB directory |
+| `CHROMA_COLLECTION_NAME` | `rentals_feature_ideas` | Collection name for RAG chunks |
 
 ---
 
@@ -181,6 +201,12 @@ src/rentals_agents/
   llm/
     ollama_client.py # HTTP client for Ollama
     json_utils.py    # parse LLM JSON responses
+  rag/
+    knowledge_base.py # load and chunk local source documents
+    retriever.py      # lexical retriever for top-k chunks
+    vector_store.py   # ChromaDB vector retriever + embedding backends
+    evaluation.py     # prompt-quality and feature-plan adequacy checks
+    service.py        # prompt-ready retrieval API for rag_node
   prompts/
     system.py        # system prompts for RAG, Coder, Supervisor
   graph/
@@ -216,6 +242,31 @@ return {"features_plan": ["idea 1", "idea 2", ...]}
 **MLOps/Borya SuperStar (Data_Profiler + metrics):**
 - Replace `data_profiler_node` — set `{"df_info": "<text summary>"}`. DONE!!
 - After your CV code runs, write MSE to `metrics` and append to `mse_history` in `executor_node`. DONE!!
+The repository now includes a local RAG corpus in `data/knowledge_base/` plus a
+retrieval layer in `src/rentals_agents/rag/`. The current implementation is
+hybrid and CI-friendly:
+- Primary path: ChromaDB vector retrieval with ONNX MiniLM (`all-MiniLM-L6-v2`)
+- Offline/test path: lexical fallback or hash embeddings
+
+The knowledge base now also carries explicit source provenance in
+`data/knowledge_base/sources.json`, so each retrieved chunk can be traced back
+to its external material.
+
+### RAG prompt evaluation
+
+To test how the real reasoning model reacts to retrieved context:
+
+```bash
+MOCK_LLM=0 python -m rentals_agents.rag.prompt_eval
+```
+
+This runs a small regression suite of dataset summaries, feeds retrieved
+context into the RAG prompt, and checks whether the returned feature plan covers
+the main signal families we expect: location, time, price, reviews, and host behavior.
+
+**MLOps/Borya (Data_Profiler + metrics):**
+- Replace `data_profiler_node` — set `{"df_info": "<text summary>"}`.
+- After your CV code runs, write MSE to `metrics` and append to `mse_history` in `executor_node`.
 - `target_threshold` comes from `config.TARGET_MSE_THRESHOLD`; pass it to Supervisor prompt via `supervisor_system_prompt()`.
 
 ### State fields reference
