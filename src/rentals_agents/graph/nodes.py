@@ -18,8 +18,15 @@ Teammates: replace mock logic inside each function with your real implementation
 Keep the function signature and return-key contract unchanged.
 """
 
+import csv
 import io
+import math
+import os
 import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 from rentals_agents.config import (
     DATA_DIR,
@@ -38,6 +45,57 @@ from rentals_agents.prompts.system import (
 )
 from rentals_agents.state import State
 
+_MSE_LINE_RE = re.compile(
+    r"(?im)^\s*MSE:\s*([-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)"
+)
+_SUBMISSION_COLUMNS = ("index", "prediction")
+_EXECUTOR_TIMEOUT_SECONDS = 300.0
+
+
+def _extract_mse_from_output(output: str) -> float:
+    match = _MSE_LINE_RE.search(output)
+    if match is None:
+        return float("inf")
+    return float(match.group(1))
+
+
+def _validate_submission_csv(path: Path) -> str | None:
+    if not path.exists():
+        return "submission.csv is missing"
+
+    try:
+        with path.open("r", encoding="utf-8", newline="") as csv_file:
+            reader = csv.DictReader(csv_file)
+            if tuple(reader.fieldnames or ()) != _SUBMISSION_COLUMNS:
+                return (
+                    "submission.csv must have exactly columns "
+                    "'index,prediction' in this order"
+                )
+
+            has_rows = False
+            for row in reader:
+                has_rows = True
+                raw_index = row.get("index")
+                raw_prediction = row.get("prediction")
+
+                if raw_index is None or raw_prediction is None:
+                    return "submission.csv contains malformed rows"
+
+                try:
+                    int(raw_index)
+                    prediction = float(raw_prediction)
+                except (TypeError, ValueError):
+                    return "submission.csv must contain numeric index and prediction"
+
+                if not math.isfinite(prediction):
+                    return "submission.csv contains non-finite prediction values"
+
+            if not has_rows:
+                return "submission.csv is empty"
+    except (OSError, csv.Error) as exc:
+        return f"Failed to read submission.csv: {exc}"
+
+    return None
 
 # ── 1. Data_Profiler ──────────────────────────────────────────────────────────
 
@@ -208,11 +266,101 @@ def executor_node(state: State) -> dict:
     new_iteration_count = state.get("iteration_count", 0) + 1
 
     if not MOCK_LLM:
-        # Real implementation goes here (DevOps / Security module).
-        raise NotImplementedError(
-            "Real Code_Executor not yet connected. Set MOCK_LLM=1 or implement "
-            "subprocess sandboxing in graph/nodes.py::executor_node."
-        )
+        generated_code = state.get("generated_code", "")
+        if not generated_code.strip():
+            msg = "No generated code found."
+            return {
+                "execution_result": msg,
+                "execution_ok": False,
+                "metrics": {"mse": float("inf")},
+                "mse_history": [float("inf")],
+                "iteration_count": new_iteration_count,
+            }
+
+        work_dir = Path(os.getcwd())
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_script = Path(tmp_dir) / "agent_script.py"
+            temp_script.write_text(generated_code, encoding="utf-8")
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(temp_script)],
+                    cwd=str(work_dir),
+                    env=os.environ.copy(),
+                    capture_output=True,
+                    text=True,
+                    timeout=_EXECUTOR_TIMEOUT_SECONDS,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                return {
+                    "execution_result": (
+                        f"Code execution timed out after "
+                        f"{_EXECUTOR_TIMEOUT_SECONDS} seconds."
+                    ),
+                    "execution_ok": False,
+                    "metrics": {"mse": float("inf")},
+                    "mse_history": [float("inf")],
+                    "iteration_count": new_iteration_count,
+                }
+
+        output = (result.stdout or "").strip()
+        if result.stderr:
+            stderr_part = (result.stderr or "").strip()
+            if output:
+                output = f"{output}\n--- stderr ---\n{stderr_part}"
+            else:
+                output = stderr_part
+
+        mse = _extract_mse_from_output((result.stdout or ""))
+        is_mse_finite = math.isfinite(mse)
+        if not is_mse_finite:
+            mse_for_state = float("inf")
+        else:
+            mse_for_state = mse
+
+        if result.returncode != 0:
+            return {
+                "execution_result": output,
+                "execution_ok": False,
+                "metrics": {"mse": mse_for_state},
+                "mse_history": [mse_for_state],
+                "iteration_count": new_iteration_count,
+            }
+
+        if not is_mse_finite:
+            return {
+                "execution_result": (
+                    f"{output}\nValidation error: output has no valid MSE line"
+                    if output
+                    else "Validation error: output has no valid MSE line"
+                ),
+                "execution_ok": False,
+                "metrics": {"mse": float("inf")},
+                "mse_history": [float("inf")],
+                "iteration_count": new_iteration_count,
+            }
+
+        submission_error = _validate_submission_csv(work_dir / "submission.csv")
+        if submission_error is not None:
+            return {
+                "execution_result": (
+                    f"{output}\nValidation error: {submission_error}"
+                    if output
+                    else f"Validation error: {submission_error}"
+                ),
+                "execution_ok": False,
+                "metrics": {"mse": mse_for_state},
+                "mse_history": [mse_for_state],
+                "iteration_count": new_iteration_count,
+            }
+
+        return {
+            "execution_result": output,
+            "execution_ok": True,
+            "metrics": {"mse": mse_for_state},
+            "mse_history": [mse_for_state],
+            "iteration_count": new_iteration_count,
+        }
 
     # Mock: extract MSE from the generated code string (works for mock_code above)
     code = state.get("generated_code", "")
