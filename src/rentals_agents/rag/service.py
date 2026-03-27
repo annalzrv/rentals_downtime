@@ -70,16 +70,23 @@ def retrieve_knowledge(
         "catboost cross validation outliers availability reviews host location "
         f"{dataset_summary}"
     )
+    final_k = top_k or RAG_TOP_K
+    candidate_k = max(final_k * 3, 6)
     requested_backend = backend or RAG_RETRIEVER_BACKEND
     requested_embedding_backend = embedding_backend or RAG_EMBEDDING_BACKEND
 
     try:
         retriever = _get_retriever(requested_backend, requested_embedding_backend)
-        hits = retriever.search(query, top_k=top_k or RAG_TOP_K)
         effective_backend = _resolve_backend(requested_backend)
+        if effective_backend == "chroma":
+            vector_hits = retriever.search(query, top_k=candidate_k)
+            lexical_hits = _get_retriever("lexical", "hash").search(query, top_k=candidate_k)
+            hits = _hybrid_rerank(query, vector_hits, lexical_hits, final_k=final_k)
+        else:
+            hits = retriever.search(query, top_k=final_k)
     except Exception:
         retriever = _get_retriever("lexical", "hash")
-        hits = retriever.search(query, top_k=top_k or RAG_TOP_K)
+        hits = retriever.search(query, top_k=final_k)
         effective_backend = "lexical"
 
     return RetrievalResult(
@@ -172,3 +179,64 @@ def _resolve_embedding_backend(embedding_backend: str):
     if embedding_backend == "hash":
         return HashEmbeddingBackend()
     raise ValueError(f"Unsupported embedding backend: {embedding_backend}")
+
+
+def _hybrid_rerank(
+    query: str,
+    vector_hits: list[ScoredChunk],
+    lexical_hits: list[ScoredChunk],
+    *,
+    final_k: int,
+) -> list[ScoredChunk]:
+    """Blend vector similarity with lexical relevance for stable top-k retrieval."""
+    merged: dict[str, ScoredChunk] = {}
+    combined_scores: dict[str, float] = {}
+
+    for hit in vector_hits:
+        merged[hit.chunk.chunk_id] = hit
+        combined_scores[hit.chunk.chunk_id] = combined_scores.get(hit.chunk.chunk_id, 0.0) + (
+            hit.score * 0.7
+        )
+
+    for hit in lexical_hits:
+        merged[hit.chunk.chunk_id] = hit
+        combined_scores[hit.chunk.chunk_id] = combined_scores.get(hit.chunk.chunk_id, 0.0) + (
+            hit.score * 0.9
+        )
+
+    for chunk_id, hit in merged.items():
+        combined_scores[chunk_id] += _domain_signal_boost(query, hit.chunk.text, hit.chunk.source_title)
+
+    ranked = sorted(
+        merged.values(),
+        key=lambda hit: combined_scores.get(hit.chunk.chunk_id, 0.0),
+        reverse=True,
+    )
+    return [
+        ScoredChunk(chunk=hit.chunk, score=combined_scores[hit.chunk.chunk_id])
+        for hit in ranked[:final_k]
+    ]
+
+
+def _domain_signal_boost(query: str, text: str, title: str) -> float:
+    query_lower = query.lower()
+    haystack = f"{title}\n{text}".lower()
+    boost = 0.0
+
+    if _contains_any(query_lower, ("time", "cross validation", "last_dt", "weekday", "month")):
+        if _contains_any(haystack, ("time series", "timeseriessplit", "last_dt", "weekday", "month", "recency")):
+            boost += 0.45
+
+    if _contains_any(query_lower, ("catboost", "boosting", "categorical")):
+        if _contains_any(haystack, ("catboost", "gradient-boosting", "categorical")):
+            boost += 0.20
+
+    if _contains_any(query_lower, ("outlier", "validation", "nan")):
+        if _contains_any(haystack, ("outlier", "validation", "robust", "nan")):
+            boost += 0.15
+
+    return boost
+
+
+def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in text for needle in needles)
