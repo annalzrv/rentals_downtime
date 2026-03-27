@@ -35,8 +35,8 @@ import subprocess
 import tempfile
 import os
 import re
-import pandas as pd
 import sys
+import pandas as pd
 
 
 # ── 1. Data_Profiler ──────────────────────────────────────────────────────────
@@ -53,7 +53,6 @@ def data_profiler_node(state: State) -> dict:
     Mock: returns a static description of a plausible rental dataset.
     """
     if not config.MOCK_LLM:
-        import pandas as pd
 
         train_path = f"{config.DATA_DIR}/train.csv"
         df = pd.read_csv(train_path)
@@ -268,6 +267,7 @@ def executor_node(state: State) -> dict:
             "metrics": metrics,
             "mse_history": [metrics.get("mse")] if metrics else [],
             "iteration_count": new_iteration_count,
+            "supervisor_reasoning": "",
         }
 
     # Mock: extract MSE from the generated code string (works for mock_code above)
@@ -284,6 +284,7 @@ def executor_node(state: State) -> dict:
         "metrics": metrics,
         "mse_history": [mse_value],          # reducer appends this
         "iteration_count": new_iteration_count,
+        "supervisor_reasoning": "",
     }
 
 

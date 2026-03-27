@@ -81,14 +81,25 @@ Cross-validation template you MUST follow:
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error
 import numpy as np
+import pandas as pd
+
+# Sort by date to preserve temporal order (fill NaN last_dt with a sentinel)
+df_train = pd.read_csv("train.csv")
+df_train['last_dt'] = pd.to_datetime(df_train['last_dt'], errors='coerce')
+df_train = df_train.sort_values('last_dt', na_position='last').reset_index(drop=True)
+
+Prepare features and target
+X = df_train.drop(columns=['target'])
+y = df_train['target']
+
 tscv = TimeSeriesSplit(n_splits=5)
 mse_scores = []
 for train_idx, val_idx in tscv.split(X):
-    X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
-    y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
-    model.fit(X_train, y_train)
-    preds = model.predict(X_val)
-    mse_scores.append(mean_squared_error(y_val, preds))
+X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+model.fit(X_train, y_train)
+preds = model.predict(X_val)
+mse_scores.append(mean_squared_error(y_val, preds))
 mse = float(np.mean(mse_scores))
 print(f"MSE: {mse}")
 ```
