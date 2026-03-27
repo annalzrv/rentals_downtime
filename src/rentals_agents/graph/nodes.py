@@ -21,14 +21,7 @@ Keep the function signature and return-key contract unchanged.
 import io
 import re
 
-from rentals_agents.config import (
-    DATA_DIR,
-    LLM_MODEL,
-    MAX_GRAPH_ITERATIONS,
-    MOCK_LLM,
-    QWEN_CODER_MODEL,
-    TARGET_MSE_THRESHOLD,
-)
+import rentals_agents.config as config
 from rentals_agents.llm.json_utils import parse_json_response
 from rentals_agents.llm.ollama_client import OllamaError, chat
 from rentals_agents.prompts.system import (
@@ -37,6 +30,13 @@ from rentals_agents.prompts.system import (
     supervisor_system_prompt,
 )
 from rentals_agents.state import State
+
+import subprocess
+import tempfile
+import os
+import re
+import pandas as pd
+import sys
 
 
 # ── 1. Data_Profiler ──────────────────────────────────────────────────────────
@@ -52,10 +52,10 @@ def data_profiler_node(state: State) -> dict:
 
     Mock: returns a static description of a plausible rental dataset.
     """
-    if not MOCK_LLM:
+    if not config.MOCK_LLM:
         import pandas as pd
 
-        train_path = f"{DATA_DIR}/train.csv"
+        train_path = f"{config.DATA_DIR}/train.csv"
         df = pd.read_csv(train_path)
 
         buf = io.StringIO()
@@ -113,14 +113,14 @@ def rag_node(state: State) -> dict:
 
     Mock: returns a hardcoded, realistic feature plan.
     """
-    if not MOCK_LLM:
+    if not config.MOCK_LLM:
         user_msg = (
             f"Dataset description:\n{state['df_info']}\n\n"
             "Based on this dataset, suggest feature engineering ideas for "
             "predicting rental price per night."
         )
         try:
-            raw = chat(LLM_MODEL, RAG_SYSTEM_PROMPT, user_msg)
+            raw = chat(config.LLM_MODEL, RAG_SYSTEM_PROMPT, user_msg)
             parsed = parse_json_response(raw)
             ideas: list[str] = parsed.get("ideas", [])
         except (OllamaError, ValueError) as exc:
@@ -154,7 +154,7 @@ def coder_node(state: State) -> dict:
 
     Mock: returns a minimal valid Python script that prints a fixed MSE.
     """
-    if not MOCK_LLM:
+    if not config.MOCK_LLM:
         error_context = ""
         if state.get("execution_result") and not state.get("execution_ok", True):
             error_context = (
@@ -168,7 +168,7 @@ def coder_node(state: State) -> dict:
             f"{error_context}"
         )
         try:
-            raw = chat(QWEN_CODER_MODEL, CODER_SYSTEM_PROMPT, user_msg)
+            raw = chat(config.QWEN_CODER_MODEL, CODER_SYSTEM_PROMPT, user_msg)
             parsed = parse_json_response(raw)
             code: str = parsed.get("code", "")
         except (OllamaError, ValueError) as exc:
@@ -207,12 +207,68 @@ def executor_node(state: State) -> dict:
     """
     new_iteration_count = state.get("iteration_count", 0) + 1
 
-    if not MOCK_LLM:
-        # Real implementation goes here (DevOps / Security module).
-        raise NotImplementedError(
-            "Real Code_Executor not yet connected. Set MOCK_LLM=1 or implement "
-            "subprocess sandboxing in graph/nodes.py::executor_node."
-        )
+    if not config.MOCK_LLM:
+        code = state.get("generated_code", "")
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(code)
+            script_path = f.name
+
+        try:
+            result = subprocess.run(
+                [sys.executable, script_path],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=os.getcwd()
+            )
+            stdout = result.stdout
+            stderr = result.stderr
+            execution_result = f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+            execution_ok = (result.returncode == 0)
+
+            mse_match = re.search(r"MSE:\s*([\d.]+)", stdout)
+            if mse_match:
+                mse_value = float(mse_match.group(1))
+            else:
+                mse_value = None
+                execution_ok = False
+                execution_result += "\n[ERROR] MSE not found in output"
+
+            submission_path = "submission.csv"
+            if os.path.exists(submission_path):
+                df_sub = pd.read_csv(submission_path)
+                required_cols = ['index', 'prediction']
+                if not all(col in df_sub.columns for col in required_cols):
+                    execution_ok = False
+                    execution_result += "\n[ERROR] submission.csv missing required columns"
+                elif df_sub.isnull().any().any():
+                    execution_ok = False
+                    execution_result += "\n[ERROR] submission.csv contains NaN"
+            else:
+                execution_ok = False
+                execution_result += "\n[ERROR] submission.csv not found"
+
+            metrics = {"mse": mse_value} if mse_value is not None else {}
+
+        except subprocess.TimeoutExpired:
+            execution_result = "Timeout (60s) while running script"
+            execution_ok = False
+            metrics = {}
+        except Exception as e:
+            execution_result = f"Execution error: {e}"
+            execution_ok = False
+            metrics = {}
+        finally:
+            if os.path.exists(script_path):
+                os.unlink(script_path)
+
+        return {
+            "execution_result": execution_result,
+            "execution_ok": execution_ok,
+            "metrics": metrics,
+            "mse_history": [metrics.get("mse")] if metrics else [],
+            "iteration_count": new_iteration_count,
+        }
 
     # Mock: extract MSE from the generated code string (works for mock_code above)
     code = state.get("generated_code", "")
@@ -242,8 +298,8 @@ def supervisor_node(state: State) -> dict:
 
     Mock: returns "END" unconditionally so smoke tests terminate quickly.
     """
-    if not MOCK_LLM:
-        system = supervisor_system_prompt(TARGET_MSE_THRESHOLD, MAX_GRAPH_ITERATIONS)
+    if not config.MOCK_LLM:
+        system = supervisor_system_prompt(config.TARGET_MSE_THRESHOLD, config.MAX_GRAPH_ITERATIONS)
         mse_history = state.get("mse_history", [])
         user_msg = (
             f"mse_history: {mse_history}\n"
@@ -254,7 +310,7 @@ def supervisor_node(state: State) -> dict:
             f"{'; '.join(state.get('features_plan', [])[:3])} ..."
         )
         try:
-            raw = chat(LLM_MODEL, system, user_msg)
+            raw = chat(config.LLM_MODEL, system, user_msg)
             parsed = parse_json_response(raw)
             next_node: str = parsed.get("next_node", "")
             reasoning: str = parsed.get("reasoning", "")

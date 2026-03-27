@@ -17,11 +17,21 @@ class Benchmark:
         self.total_output_tokens: int = 0
         self.final_mse: Optional[float] = None
 
+    @classmethod
+    def reset(cls):
+        cls._instance = None
+
     def start(self):
         self.start_time = time.time()
 
     def stop(self):
         self.end_time = time.time()
+
+    @property
+    def duration(self) -> float:
+        if self.start_time and self.end_time:
+            return self.end_time - self.start_time
+        return 0.0
 
     def add_tokens(self, input_tokens: int, output_tokens: int):
         self.total_input_tokens += input_tokens
@@ -31,10 +41,9 @@ class Benchmark:
         self.final_mse = mse
 
     def report(self) -> str:
-        duration = (self.end_time - self.start_time) if self.end_time and self.start_time else 0
         total_tokens = self.total_input_tokens + self.total_output_tokens
         return f"""=== Benchmark Report ===
-Total execution time: {duration:.2f} seconds
+Total execution time: {self.duration:.2f} seconds
 Total input tokens: {self.total_input_tokens}
 Total output tokens: {self.total_output_tokens}
 Total tokens: {total_tokens}

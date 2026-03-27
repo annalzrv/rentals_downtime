@@ -33,7 +33,7 @@ def main() -> None:
 
     log_data = {
         "timestamp": time.time(),
-        "duration_seconds": benchmark.end_time - benchmark.start_time if benchmark.end_time and benchmark.start_time else 0,
+        "duration_seconds": benchmark.duration,   # <-- используем свойство
         "total_input_tokens": benchmark.total_input_tokens,
         "total_output_tokens": benchmark.total_output_tokens,
         "final_mse": benchmark.final_mse,
