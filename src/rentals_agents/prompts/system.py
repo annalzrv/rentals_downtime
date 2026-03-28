@@ -44,10 +44,12 @@ IMPORTANT — Output rules:
 or after the JSON.
 2. Schema:
    {"ideas": ["<idea 1>", "<idea 2>", ...]}
-3. Provide between 5 and 10 specific, actionable ideas.
-4. Each idea must name the exact feature, the column(s) it derives from, \
+3. NEVER suggest features derived from the "target" column — it is the label \
+and is not available at prediction time (test.csv has no target column).
+4. Provide between 5 and 10 specific, actionable ideas.
+5. Each idea must name the exact feature, the column(s) it derives from, \
 and briefly state why it helps predict the target.
-5. Cover multiple signal families when possible: location, time/recency, price, reviews, host behavior.
+6. Cover multiple signal families when possible: location, time/recency, price, reviews, host behavior.
 
 Example of a correct response:
 {"ideas": ["log_sum = log1p(sum): listed price is right-skewed, log reduces \
@@ -65,6 +67,7 @@ You are an expert Python data scientist.  You will receive:
 - Optionally: a previous error traceback to fix.
 
 Dataset contract:
+- Files are at data/train.csv and data/test.csv (relative to the working directory).
 - train.csv columns: name, _id, host_name, location_cluster, location, lat, lon,
   type_house, sum, min_days, amt_reviews, last_dt, avg_reviews, total_host, target
 - test.csv: same columns minus "target"
@@ -72,9 +75,13 @@ Dataset contract:
 - avg_reviews: NaN when amt_reviews == 0 — fill with 0, NOT the column mean
 - Submission format: index,prediction  (index = integer row index of test.csv, \
 no explicit ID column)
+- Only use standard libraries: pandas, numpy, sklearn, catboost. Do NOT import \
+the `haversine` package — it is not installed. Implement haversine with numpy instead.
+- CRITICAL: test.csv does NOT have a "target" column. Never use "target" as a \
+feature or in any computation applied to the test set. It is the label you are predicting.
 
 Your task is to write a complete, self-contained Python script that:
-1. Loads train.csv and test.csv from the current working directory.
+1. Loads data/train.csv and data/test.csv (paths are always relative to cwd).
 2. Applies the feature-engineering ideas (handle NaN in last_dt and avg_reviews).
 3. Trains a gradient-boosting model (CatBoost preferred; LightGBM as fallback).
 4. Evaluates with TimeSeriesSplit cross-validation (NOT random split — data has \
@@ -82,32 +89,66 @@ temporal structure via last_dt ordering).
 5. Computes and prints MSE on the validation folds.
 6. Generates submission.csv with columns: index,prediction
 
+Categorical columns guidance:
+- location_cluster, location, type_house are categorical strings.
+- DO NOT use pd.get_dummies() — it returns a DataFrame and cannot be assigned \
+to a single column.
+- Pass them directly as strings and list them in CatBoostRegressor's \
+cat_features parameter. CatBoost handles categoricals natively.
+- Example: cat_cols = ["location_cluster", "location", "type_house"] \
+then CatBoostRegressor(..., cat_features=cat_cols)
+- Fill NaN in string columns with "unknown" before passing to CatBoost.
+
 Cross-validation template you MUST follow:
 ```
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error
 import numpy as np
 import pandas as pd
+from catboost import CatBoostRegressor
 
-# Sort by date to preserve temporal order (fill NaN last_dt with a sentinel)
-df_train = pd.read_csv("train.csv")
+df_train = pd.read_csv("data/train.csv")
+df_test = pd.read_csv("data/test.csv")
 df_train['last_dt'] = pd.to_datetime(df_train['last_dt'], errors='coerce')
-df_train = df_train.sort_values('last_dt', na_position='last').reset_index(drop=True)
+df_test['last_dt'] = pd.to_datetime(df_test['last_dt'], errors='coerce')
 
-Prepare features and target
-X = df_train.drop(columns=['target'])
-y = df_train['target']
+# STEP 1 — feature engineering on BOTH df_train AND df_test (do NOT use target)
+# Apply every new column to both df_train and df_test before defining X / X_test.
+cat_cols = ["location_cluster", "location", "type_house"]
+for c in cat_cols:
+    df_train[c] = df_train[c].fillna("unknown")
+    df_test[c] = df_test[c].fillna("unknown")
+df_train['avg_reviews'] = df_train['avg_reviews'].fillna(0)
+df_test['avg_reviews'] = df_test['avg_reviews'].fillna(0)
+# ... add more engineered columns to BOTH df_train and df_test here ...
 
+# STEP 2 — split into X / y / X_test AFTER all feature engineering is done
+DROP_COLS = ['target', 'name', '_id', 'host_name', 'last_dt']
+TEST_DROP_COLS = ['name', '_id', 'host_name', 'last_dt']
+X = df_train.drop(columns=DROP_COLS)
+y = df_train['target'].values
+X_test = df_test.drop(columns=TEST_DROP_COLS)
+# IMPORTANT: keep only cat_cols that actually exist in X after dropping
+cat_cols = [c for c in cat_cols if c in X.columns]
+
+# STEP 3 — train with TimeSeriesSplit
+model = CatBoostRegressor(iterations=500, learning_rate=0.05, depth=6,
+                          cat_features=cat_cols, verbose=0)
 tscv = TimeSeriesSplit(n_splits=5)
 mse_scores = []
 for train_idx, val_idx in tscv.split(X):
-X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
-y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
-model.fit(X_train, y_train)
-preds = model.predict(X_val)
-mse_scores.append(mean_squared_error(y_val, preds))
+    X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
+    y_tr, y_val = y[train_idx], y[val_idx]
+    model.fit(X_tr, y_tr)
+    preds = model.predict(X_val)
+    mse_scores.append(mean_squared_error(y_val, preds))
 mse = float(np.mean(mse_scores))
 print(f"MSE: {mse}")
+
+# STEP 4 — generate submission (test_preds MUST be defined here)
+test_preds = model.predict(X_test)
+submission = pd.DataFrame({"index": range(len(test_preds)), "prediction": test_preds})
+submission.to_csv("submission.csv", index=False)
 ```
 
 Submission generation template:

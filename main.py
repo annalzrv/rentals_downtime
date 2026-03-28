@@ -8,6 +8,10 @@ Usage:
 
 import json
 import time
+
+from dotenv import load_dotenv
+load_dotenv()
+
 from rentals_agents.graph.builder import build_graph
 from rentals_agents.state import initial_state
 from rentals_agents.benchmark import Benchmark
@@ -19,7 +23,10 @@ def main() -> None:
     benchmark.start()
 
     graph = build_graph()
-    result = graph.invoke(initial_state())
+    result = graph.invoke(
+        initial_state(),
+        config={"recursion_limit": config.MAX_GRAPH_ITERATIONS * 15 + 20},
+    )
 
     benchmark.stop()
 

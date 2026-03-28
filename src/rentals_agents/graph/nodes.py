@@ -178,6 +178,13 @@ def rag_node(state: State) -> dict:
             raw = chat(config.LLM_MODEL, RAG_SYSTEM_PROMPT, user_msg)
             parsed = parse_json_response(raw)
             ideas: list[str] = parsed.get("ideas", [])
+            # Safety filter: remove any idea that uses the target column as input
+            ideas = [
+                idea for idea in ideas
+                if "/ target" not in idea.lower()
+                and "/ df_train['target']" not in idea.lower()
+                and not (idea.lower().startswith("sum_to_target") or "= sum / target" in idea.lower())
+            ]
             report = evaluate_feature_plan(ideas)
             if not report.is_adequate:
                 ideas = generate_mock_feature_plan(state["df_info"])
@@ -257,6 +264,9 @@ def executor_node(state: State) -> dict:
 
     if not config.MOCK_LLM:
         generated_code = state.get("generated_code", "")
+        # Fix common LLM quote-mixing bugs: 'value" → 'value'  and  "value' → "value"
+        generated_code = re.sub(r"'([^'\n]*?)\"", lambda m: f"'{m.group(1)}'", generated_code)
+        generated_code = re.sub(r'"([^"\n]*?)\'', lambda m: f'"{m.group(1)}"', generated_code)
         if not generated_code.strip():
             return {
                 "execution_result": "No generated code found.",

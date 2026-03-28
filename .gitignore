@@ -36,3 +36,5 @@ data/chroma_db/
 .ruff_cache/
 .idea/
 .DS_Store
+.env
+catboost_info/
