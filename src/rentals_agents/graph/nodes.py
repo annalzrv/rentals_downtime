@@ -187,10 +187,10 @@ def rag_node(state: State) -> dict:
             ]
             report = evaluate_feature_plan(ideas)
             if not report.is_adequate:
-                ideas = generate_mock_feature_plan(state["df_info"])
+                ideas = generate_mock_feature_plan(state["df_info"], retrieval.context)
         except (OllamaError, ValueError) as exc:
             ideas = [f"[RAG error — using fallback] {exc}"]
-            ideas.extend(generate_mock_feature_plan(state["df_info"]))
+            ideas.extend(generate_mock_feature_plan(state["df_info"], retrieval.context))
         return {"features_plan": ideas}
 
     return {"features_plan": generate_mock_feature_plan(state["df_info"])}

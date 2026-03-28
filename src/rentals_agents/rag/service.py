@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+import warnings
+
+import httpx
 
 from rentals_agents.config import (
     CHROMA_COLLECTION_NAME,
@@ -25,6 +28,12 @@ from rentals_agents.rag.vector_store import (
 )
 from rentals_agents.rag.retriever import LexicalRetriever, ScoredChunk
 
+try:
+    from chromadb.errors import ChromaError
+except ImportError:  # pragma: no cover - fallback when chromadb is absent
+    class ChromaError(Exception):
+        """Fallback error type when Chroma is not installed."""
+
 
 @dataclass(frozen=True)
 class RetrievalResult:
@@ -33,6 +42,21 @@ class RetrievalResult:
     chunks: list[ScoredChunk]
     context: str
     backend: str
+
+
+class RetrievalFallbackWarning(UserWarning):
+    """Emitted when vector retrieval degrades to lexical retrieval."""
+
+
+EXPECTED_VECTOR_BACKEND_ERRORS = (
+    ChromaError,
+    httpx.HTTPError,
+    ImportError,
+    OSError,
+    PermissionError,
+    RuntimeError,
+    ValueError,
+)
 
 
 @lru_cache(maxsize=8)
@@ -51,7 +75,7 @@ def _get_retriever(
         return ChromaVectorRetriever(
             chunks,
             persist_dir=CHROMA_PERSIST_DIR,
-            collection_name=CHROMA_COLLECTION_NAME,
+            collection_name=_collection_name_for_embedding_backend(embedding_backend),
             embedding_backend=_resolve_embedding_backend(embedding_backend),
         )
     return LexicalRetriever(chunks)
@@ -71,29 +95,34 @@ def retrieve_knowledge(
         f"{dataset_summary}"
     )
     final_k = top_k or RAG_TOP_K
-    candidate_k = max(final_k * 3, 6)
     requested_backend = backend or RAG_RETRIEVER_BACKEND
     requested_embedding_backend = embedding_backend or RAG_EMBEDDING_BACKEND
+    resolved_backend = _resolve_backend(requested_backend)
+
+    if resolved_backend == "lexical":
+        return _run_lexical_retrieval(query, final_k=final_k)
+
+    if resolved_backend != "chroma":
+        raise ValueError(f"Unsupported retriever backend: {resolved_backend}")
 
     try:
-        retriever = _get_retriever(requested_backend, requested_embedding_backend)
-        effective_backend = _resolve_backend(requested_backend)
-        if effective_backend == "chroma":
-            vector_hits = retriever.search(query, top_k=candidate_k)
-            lexical_hits = _get_retriever("lexical", "hash").search(query, top_k=candidate_k)
-            hits = _hybrid_rerank(query, vector_hits, lexical_hits, final_k=final_k)
-        else:
-            hits = retriever.search(query, top_k=final_k)
-    except Exception:
-        retriever = _get_retriever("lexical", "hash")
-        hits = retriever.search(query, top_k=final_k)
-        effective_backend = "lexical"
-
-    return RetrievalResult(
-        chunks=hits,
-        context=build_rag_prompt_context(hits),
-        backend=effective_backend,
-    )
+        return _run_chroma_retrieval(
+            query,
+            final_k=final_k,
+            requested_backend=requested_backend,
+            requested_embedding_backend=requested_embedding_backend,
+        )
+    except EXPECTED_VECTOR_BACKEND_ERRORS as exc:
+        warnings.warn(
+            (
+                "Vector retrieval failed; falling back to lexical retrieval. "
+                f"backend={requested_backend}, embedding_backend={requested_embedding_backend}, "
+                f"reason={type(exc).__name__}: {exc}"
+            ),
+            RetrievalFallbackWarning,
+            stacklevel=2,
+        )
+        return _run_lexical_retrieval(query, final_k=final_k)
 
 
 def build_rag_prompt_context(chunks: list[ScoredChunk]) -> str:
@@ -118,11 +147,13 @@ def build_rag_prompt_context(chunks: list[ScoredChunk]) -> str:
     return "\n\n".join(parts) if parts else "No external knowledge retrieved."
 
 
-def generate_mock_feature_plan(dataset_summary: str) -> list[str]:
+def generate_mock_feature_plan(
+    dataset_summary: str,
+    retrieval_context: str = "",
+) -> list[str]:
     """Deterministic fallback used in tests and mock mode."""
-    retrieval = retrieve_knowledge(dataset_summary)
     ideas: list[str] = []
-    corpus = retrieval.context.lower()
+    corpus = retrieval_context.lower()
 
     if "last_dt" in dataset_summary or "time series" in corpus:
         ideas.extend(
@@ -179,6 +210,40 @@ def _resolve_embedding_backend(embedding_backend: str):
     if embedding_backend == "hash":
         return HashEmbeddingBackend()
     raise ValueError(f"Unsupported embedding backend: {embedding_backend}")
+
+
+def _collection_name_for_embedding_backend(embedding_backend: str) -> str:
+    safe_backend = embedding_backend.replace("-", "_").replace(":", "_")
+    return f"{CHROMA_COLLECTION_NAME}_{safe_backend}"
+
+
+def _run_lexical_retrieval(query: str, *, final_k: int) -> RetrievalResult:
+    retriever = _get_retriever("lexical", "hash")
+    hits = retriever.search(query, top_k=final_k)
+    return RetrievalResult(
+        chunks=hits,
+        context=build_rag_prompt_context(hits),
+        backend="lexical",
+    )
+
+
+def _run_chroma_retrieval(
+    query: str,
+    *,
+    final_k: int,
+    requested_backend: str,
+    requested_embedding_backend: str,
+) -> RetrievalResult:
+    candidate_k = max(final_k * 3, 6)
+    retriever = _get_retriever(requested_backend, requested_embedding_backend)
+    vector_hits = retriever.search(query, top_k=candidate_k)
+    lexical_hits = _get_retriever("lexical", "hash").search(query, top_k=candidate_k)
+    hits = _hybrid_rerank(query, vector_hits, lexical_hits, final_k=final_k)
+    return RetrievalResult(
+        chunks=hits,
+        context=build_rag_prompt_context(hits),
+        backend="chroma",
+    )
 
 
 def _hybrid_rerank(
