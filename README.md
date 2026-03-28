@@ -25,11 +25,11 @@ flowchart LR
 
 | Node | Type | Owner |
 |------|------|-------|
-| `Data_Profiler` | Python function | MLOps (Borya) |
-| `RAG_Domain_Expert` | LLM (Llama/Mistral) | RAG engineer |
-| `Coder_Agent` | LLM (Qwen2.5-Coder) | Architect (Anna) |
-| `Code_Executor` | Python + subprocess | DevOps |
-| `Supervisor_Agent` | LLM (Llama/Mistral) | Architect (Anna) |
+| `Data_Profiler` | Python function | MLOps (Борис) |
+| `RAG_Domain_Expert` | LLM (Llama/Mistral) | RAG engineer (Тимофей) |
+| `Coder_Agent` | LLM (Qwen2.5-Coder) | Architect (Анна) |
+| `Code_Executor` | Python + subprocess | DevOps (Андрей) |
+| `Supervisor_Agent` | LLM (Llama/Mistral) | Architect (Анна) |
 
 ### Agentic routing & guardrails
 
