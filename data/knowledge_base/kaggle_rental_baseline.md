@@ -1,9 +1,34 @@
 # Kaggle Baseline For Rental Listings
 
-For tabular rental competitions, the strongest early baseline usually combines robust numeric transforms with a tree model such as CatBoost. Price-like columns are heavily skewed, so `log1p(sum)` is often more stable than the raw value. Host portfolio size (`total_host`) is also long-tailed and benefits from `log1p`.
+For Airbnb-style tabular competitions, a strong first baseline is usually a gradient-boosting model with careful feature cleanup rather than a very complex architecture. The columns already available in this dataset are rich enough to produce a useful baseline if they are transformed consistently and validated without leakage.
 
-Location is usually the dominant signal. Start with borough-level features from `location_cluster`, then add neighborhood or coordinate-derived features. For New York style listings, distance to Midtown or lower Manhattan often behaves like a smooth premium feature even when neighborhood labels are noisy.
+Start with price-aware but leakage-safe features derived from the observed listing price `sum`. Good baseline transformations include `log1p(sum)`, clipped price, price buckets, and interactions such as `log_sum x type_house` or `log_sum x location_cluster`. On rental data, raw price is often heavy-tailed, so models usually behave more stably after log scaling and basic clipping.
 
-Review sparsity matters. If `avg_reviews` is missing exactly when `amt_reviews == 0`, treat the missingness as information rather than noise. A binary `has_reviews` feature plus a filled score column is often better than mean imputation.
+Location should be treated as the strongest structural signal. Do not stop at a simple borough encoding. Useful first-wave features are:
+- categorical `location_cluster`
+- categorical `location`
+- rare-location flag for low-frequency neighborhoods
+- lat/lon interactions
+- distance to Midtown or another Manhattan anchor
+- coarse geo cells or coordinate bins
 
-When the task resembles demand or availability over time, combine structural listing features with lightweight temporal features extracted from the last known activity date. Even if `last_dt` is incomplete, `days_since_last_review` and calendar buckets can help the model separate active listings from stale ones.
+Review sparsity is informative by itself. If `avg_reviews` is missing when `amt_reviews == 0`, treat that as a semantic state rather than ordinary missingness. A good baseline often includes:
+- `has_reviews`
+- filled `avg_reviews`
+- `log1p(amt_reviews)`
+- `days_since_last_review`
+- recency buckets such as `recent / stale / never reviewed`
+
+Host-level structure is also useful even without an explicit host id column. The column `total_host` already tells us whether a listing belongs to a likely professional host. Suggested baseline features:
+- `log1p(total_host)`
+- bins such as `1`, `2-3`, `4+`
+- interaction `total_host x type_house`
+- flag `is_professional_host`
+
+Text columns can help if handled lightly. Even simple features from `name` are often worth trying:
+- title length
+- word count
+- presence of tokens such as `luxury`, `cozy`, `private`, `modern`, `central`
+- missing-title indicator
+
+When the target behaves like demand or availability, combine these structural features with date-derived recency features from `last_dt`. The goal of a baseline is not to invent exotic features first, but to cover location, price, reviews, host behavior, and time recency in a leakage-safe way.

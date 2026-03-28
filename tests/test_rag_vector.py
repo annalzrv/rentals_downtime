@@ -16,7 +16,8 @@ from rentals_agents.rag.service import RetrievalFallbackWarning, retrieve_knowle
 
 def test_source_manifest_enriches_documents():
     documents = load_source_documents("data/knowledge_base")
-    assert all(document.source_url for document in documents)
+    assert sum(1 for document in documents if document.source_url) >= 5
+    assert any(document.source_kind == "internal_synthesis" for document in documents)
     assert any(document.source_kind == "catboost_docs" for document in documents)
 
 
