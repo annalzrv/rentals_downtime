@@ -10,6 +10,7 @@ can wrap `chat()` with a decorator to count tokens and measure latency.
 import httpx
 
 from rentals_agents.config import OLLAMA_BASE_URL, OLLAMA_TIMEOUT
+from rentals_agents.benchmark import Benchmark
 
 
 class OllamaError(RuntimeError):
@@ -65,6 +66,12 @@ def chat(
 
     try:
         data = response.json()
+        # Извлекаем токены (OpenAI-совместимый формат)
+        usage = data.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        Benchmark().add_tokens(prompt_tokens, completion_tokens)
+
         return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, ValueError) as exc:
         raise OllamaError(

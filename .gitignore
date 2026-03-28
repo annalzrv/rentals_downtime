@@ -19,10 +19,12 @@ build/
 .venv/
 venv/
 env/
+myenv/
 
 # ── Generated artefacts ───────────────────────────────────────────────────────
 submission.csv
 experiment_log.json
+report.txt
 *.tmp
 agent_script.py
 data/chroma_db/
@@ -34,3 +36,5 @@ data/chroma_db/
 .ruff_cache/
 .idea/
 .DS_Store
+.env
+catboost_info/

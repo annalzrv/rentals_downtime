@@ -18,17 +18,17 @@ Teammates: replace mock logic inside each function with your real implementation
 Keep the function signature and return-key contract unchanged.
 """
 
+import csv
 import io
+import math
+import os
 import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
-from rentals_agents.config import (
-    DATA_DIR,
-    LLM_MODEL,
-    MAX_GRAPH_ITERATIONS,
-    MOCK_LLM,
-    QWEN_CODER_MODEL,
-    TARGET_MSE_THRESHOLD,
-)
+import rentals_agents.config as config
 from rentals_agents.llm.json_utils import parse_json_response
 from rentals_agents.llm.ollama_client import OllamaError, chat
 from rentals_agents.prompts.system import (
@@ -44,6 +44,58 @@ from rentals_agents.rag import (
 )
 from rentals_agents.state import State
 
+_MSE_LINE_RE = re.compile(
+    r"(?im)^\s*MSE:\s*([-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)"
+)
+_SUBMISSION_COLUMNS = ("index", "prediction")
+_EXECUTOR_TIMEOUT_SECONDS = 300.0
+
+
+def _extract_mse_from_output(output: str) -> float:
+    match = _MSE_LINE_RE.search(output)
+    if match is None:
+        return float("inf")
+    return float(match.group(1))
+
+
+def _validate_submission_csv(path: Path) -> str | None:
+    if not path.exists():
+        return "submission.csv is missing"
+
+    try:
+        with path.open("r", encoding="utf-8", newline="") as csv_file:
+            reader = csv.DictReader(csv_file)
+            if tuple(reader.fieldnames or ()) != _SUBMISSION_COLUMNS:
+                return (
+                    "submission.csv must have exactly columns "
+                    "'index,prediction' in this order"
+                )
+
+            has_rows = False
+            for row in reader:
+                has_rows = True
+                raw_index = row.get("index")
+                raw_prediction = row.get("prediction")
+
+                if raw_index is None or raw_prediction is None:
+                    return "submission.csv contains malformed rows"
+
+                try:
+                    int(raw_index)
+                    prediction = float(raw_prediction)
+                except (TypeError, ValueError):
+                    return "submission.csv must contain numeric index and prediction"
+
+                if not math.isfinite(prediction):
+                    return "submission.csv contains non-finite prediction values"
+
+            if not has_rows:
+                return "submission.csv is empty"
+    except (OSError, csv.Error) as exc:
+        return f"Failed to read submission.csv: {exc}"
+
+    return None
+
 
 # ── 1. Data_Profiler ──────────────────────────────────────────────────────────
 
@@ -58,10 +110,10 @@ def data_profiler_node(state: State) -> dict:
 
     Mock: returns a static description of a plausible rental dataset.
     """
-    if not MOCK_LLM:
+    if not config.MOCK_LLM:
         import pandas as pd
 
-        train_path = f"{DATA_DIR}/train.csv"
+        train_path = f"{config.DATA_DIR}/train.csv"
         df = pd.read_csv(train_path)
 
         buf = io.StringIO()
@@ -119,18 +171,24 @@ def rag_node(state: State) -> dict:
 
     Mock: returns a hardcoded, realistic feature plan.
     """
-    if not MOCK_LLM:
+    if not config.MOCK_LLM:
         retrieval = retrieve_knowledge(state["df_info"])
         user_msg = build_rag_user_message(state["df_info"], retrieval.context)
         try:
-            raw = chat(LLM_MODEL, RAG_SYSTEM_PROMPT, user_msg)
+            raw = chat(config.LLM_MODEL, RAG_SYSTEM_PROMPT, user_msg)
             parsed = parse_json_response(raw)
             ideas: list[str] = parsed.get("ideas", [])
+            # Safety filter: remove any idea that uses the target column as input
+            ideas = [
+                idea for idea in ideas
+                if "/ target" not in idea.lower()
+                and "/ df_train['target']" not in idea.lower()
+                and not (idea.lower().startswith("sum_to_target") or "= sum / target" in idea.lower())
+            ]
             report = evaluate_feature_plan(ideas)
             if not report.is_adequate:
                 ideas = generate_mock_feature_plan(state["df_info"], retrieval.context)
         except (OllamaError, ValueError) as exc:
-            # Degrade gracefully: return a minimal fallback plan
             ideas = [f"[RAG error — using fallback] {exc}"]
             ideas.extend(generate_mock_feature_plan(state["df_info"], retrieval.context))
         return {"features_plan": ideas}
@@ -151,7 +209,7 @@ def coder_node(state: State) -> dict:
 
     Mock: returns a minimal valid Python script that prints a fixed MSE.
     """
-    if not MOCK_LLM:
+    if not config.MOCK_LLM:
         error_context = ""
         if state.get("execution_result") and not state.get("execution_ok", True):
             error_context = (
@@ -165,7 +223,7 @@ def coder_node(state: State) -> dict:
             f"{error_context}"
         )
         try:
-            raw = chat(QWEN_CODER_MODEL, CODER_SYSTEM_PROMPT, user_msg)
+            raw = chat(config.QWEN_CODER_MODEL, CODER_SYSTEM_PROMPT, user_msg)
             parsed = parse_json_response(raw)
             code: str = parsed.get("code", "")
         except (OllamaError, ValueError) as exc:
@@ -204,12 +262,98 @@ def executor_node(state: State) -> dict:
     """
     new_iteration_count = state.get("iteration_count", 0) + 1
 
-    if not MOCK_LLM:
-        # Real implementation goes here (DevOps / Security module).
-        raise NotImplementedError(
-            "Real Code_Executor not yet connected. Set MOCK_LLM=1 or implement "
-            "subprocess sandboxing in graph/nodes.py::executor_node."
-        )
+    if not config.MOCK_LLM:
+        generated_code = state.get("generated_code", "")
+        # Fix common LLM quote-mixing bugs: 'value" → 'value'  and  "value' → "value"
+        generated_code = re.sub(r"'([^'\n]*?)\"", lambda m: f"'{m.group(1)}'", generated_code)
+        generated_code = re.sub(r'"([^"\n]*?)\'', lambda m: f'"{m.group(1)}"', generated_code)
+        if not generated_code.strip():
+            return {
+                "execution_result": "No generated code found.",
+                "execution_ok": False,
+                "metrics": {"mse": float("inf")},
+                "mse_history": [float("inf")],
+                "iteration_count": new_iteration_count,
+            }
+
+        work_dir = Path(os.getcwd())
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_script = Path(tmp_dir) / "agent_script.py"
+            temp_script.write_text(generated_code, encoding="utf-8")
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(temp_script)],
+                    cwd=str(work_dir),
+                    env=os.environ.copy(),
+                    capture_output=True,
+                    text=True,
+                    timeout=_EXECUTOR_TIMEOUT_SECONDS,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                return {
+                    "execution_result": (
+                        f"Code execution timed out after "
+                        f"{_EXECUTOR_TIMEOUT_SECONDS} seconds."
+                    ),
+                    "execution_ok": False,
+                    "metrics": {"mse": float("inf")},
+                    "mse_history": [float("inf")],
+                    "iteration_count": new_iteration_count,
+                }
+
+        output = (result.stdout or "").strip()
+        if result.stderr:
+            stderr_part = (result.stderr or "").strip()
+            output = f"{output}\n--- stderr ---\n{stderr_part}" if output else stderr_part
+
+        mse = _extract_mse_from_output(result.stdout or "")
+        is_mse_finite = math.isfinite(mse)
+        mse_for_state = mse if is_mse_finite else float("inf")
+
+        if result.returncode != 0:
+            return {
+                "execution_result": output,
+                "execution_ok": False,
+                "metrics": {"mse": mse_for_state},
+                "mse_history": [mse_for_state],
+                "iteration_count": new_iteration_count,
+            }
+
+        if not is_mse_finite:
+            return {
+                "execution_result": (
+                    f"{output}\nValidation error: output has no valid MSE line"
+                    if output
+                    else "Validation error: output has no valid MSE line"
+                ),
+                "execution_ok": False,
+                "metrics": {"mse": float("inf")},
+                "mse_history": [float("inf")],
+                "iteration_count": new_iteration_count,
+            }
+
+        submission_error = _validate_submission_csv(work_dir / "submission.csv")
+        if submission_error is not None:
+            return {
+                "execution_result": (
+                    f"{output}\nValidation error: {submission_error}"
+                    if output
+                    else f"Validation error: {submission_error}"
+                ),
+                "execution_ok": False,
+                "metrics": {"mse": mse_for_state},
+                "mse_history": [mse_for_state],
+                "iteration_count": new_iteration_count,
+            }
+
+        return {
+            "execution_result": output,
+            "execution_ok": True,
+            "metrics": {"mse": mse_for_state},
+            "mse_history": [mse_for_state],
+            "iteration_count": new_iteration_count,
+        }
 
     # Mock: extract MSE from the generated code string (works for mock_code above)
     code = state.get("generated_code", "")
@@ -223,7 +367,7 @@ def executor_node(state: State) -> dict:
         "execution_result": mock_stdout,
         "execution_ok": True,
         "metrics": metrics,
-        "mse_history": [mse_value],          # reducer appends this
+        "mse_history": [mse_value],
         "iteration_count": new_iteration_count,
     }
 
@@ -239,8 +383,8 @@ def supervisor_node(state: State) -> dict:
 
     Mock: returns "END" unconditionally so smoke tests terminate quickly.
     """
-    if not MOCK_LLM:
-        system = supervisor_system_prompt(TARGET_MSE_THRESHOLD, MAX_GRAPH_ITERATIONS)
+    if not config.MOCK_LLM:
+        system = supervisor_system_prompt(config.TARGET_MSE_THRESHOLD, config.MAX_GRAPH_ITERATIONS)
         mse_history = state.get("mse_history", [])
         user_msg = (
             f"mse_history: {mse_history}\n"
@@ -251,12 +395,11 @@ def supervisor_node(state: State) -> dict:
             f"{'; '.join(state.get('features_plan', [])[:3])} ..."
         )
         try:
-            raw = chat(LLM_MODEL, system, user_msg)
+            raw = chat(config.LLM_MODEL, system, user_msg)
             parsed = parse_json_response(raw)
             next_node: str = parsed.get("next_node", "")
             reasoning: str = parsed.get("reasoning", "")
         except (OllamaError, ValueError) as exc:
-            # On parse failure, write empty next_node; guardrails will fall back.
             next_node = ""
             reasoning = f"[parse error: {exc}]"
         return {"next_node": next_node, "supervisor_reasoning": reasoning}

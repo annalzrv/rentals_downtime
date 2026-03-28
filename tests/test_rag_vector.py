@@ -3,7 +3,11 @@
 import os
 import warnings
 
+import pytest
+
 os.environ.setdefault("MOCK_LLM", "1")
+
+chromadb = pytest.importorskip("chromadb", reason="chromadb not installed (pip install '.[rag]')")
 
 from rentals_agents.rag.evaluation import build_rag_user_message, evaluate_feature_plan
 from rentals_agents.rag.knowledge_base import load_source_documents

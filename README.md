@@ -25,11 +25,11 @@ flowchart LR
 
 | Node | Type | Owner |
 |------|------|-------|
-| `Data_Profiler` | Python function | MLOps (Borya) |
-| `RAG_Domain_Expert` | LLM (Llama/Mistral) | RAG engineer |
-| `Coder_Agent` | LLM (Qwen2.5-Coder) | Architect (Anna) |
-| `Code_Executor` | Python + subprocess | DevOps |
-| `Supervisor_Agent` | LLM (Llama/Mistral) | Architect (Anna) |
+| `Data_Profiler` | Python function | MLOps (Борис) |
+| `RAG_Domain_Expert` | LLM (Llama/Mistral) | RAG engineer (Тимофей) |
+| `Coder_Agent` | LLM (Qwen2.5-Coder) | Architect (Анна) |
+| `Code_Executor` | Python + subprocess | DevOps (Андрей) |
+| `Supervisor_Agent` | LLM (Llama/Mistral) | Architect (Анна) |
 
 ### Agentic routing & guardrails
 
@@ -114,6 +114,58 @@ All settings via environment variables (no `.env` file required):
 
 ---
 
+## Benchmarking & Experiment Log
+
+After each pipeline run, two files are created in the project root:
+
+- **`report.txt`** — human-readable summary with:
+  - total execution time
+  - total input/output tokens (collected from all LLM calls)
+  - final MSE
+
+- **`experiment_log.json`** — structured JSON log with:
+  - timestamp, duration
+  - token counts
+  - final MSE, iteration count, MSE history
+  - supervisor reasoning
+  - complete configuration snapshot (target threshold, max iterations, models, etc.)
+
+### Example `report.txt`
+
+```text
+=== Benchmark Report ===
+Total execution time: 45.23 seconds
+Total input tokens: 12345
+Total output tokens: 6789
+Total tokens: 19134
+Final MSE: 425.6
+```
+
+### Example `experiment_log.json`
+```json
+{
+  "timestamp": 1712345678.123,
+  "duration_seconds": 45.23,
+  "total_input_tokens": 12345,
+  "total_output_tokens": 6789,
+  "final_mse": 425.6,
+  "iteration_count": 3,
+  "mse_history": [4230.5, 1250.3, 425.6],
+  "supervisor_reasoning": "MSE improved, but still above threshold — continue with new features",
+  "config": {
+    "target_mse_threshold": 500.0,
+    "max_iterations": 10,
+    "mock_llm": false,
+    "data_dir": "data",
+    "ollama_base_url": "http://localhost:11434",
+    "qwen_coder_model": "qwen2.5-coder:7b",
+    "llm_model": "llama3:8b"
+  }
+}
+```
+
+These files help you compare different runs, debug performance, and reproduce results.
+
 ## Dataset
 
 **Source:** MWS AI Agents 2026 Kaggle competition — NYC short-term rentals (Airbnb-style).
@@ -187,6 +239,9 @@ return {
 return {"features_plan": ["idea 1", "idea 2", ...]}
 ```
 
+**MLOps/Borya SuperStar (Data_Profiler + metrics):**
+- Replace `data_profiler_node` — set `{"df_info": "<text summary>"}`. DONE!!
+- After your CV code runs, write MSE to `metrics` and append to `mse_history` in `executor_node`. DONE!!
 The repository now includes a local RAG corpus in `data/knowledge_base/` plus a
 retrieval layer in `src/rentals_agents/rag/`. The current implementation is
 hybrid and CI-friendly:
