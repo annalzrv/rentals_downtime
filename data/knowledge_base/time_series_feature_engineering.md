@@ -1,9 +1,30 @@
 # Time Series Feature Engineering For Daily Rental Demand
 
-If a dataset includes a review timestamp such as `last_dt`, do not randomize validation. Sort by time and use `TimeSeriesSplit` so later periods are validated on earlier training windows. Random splits leak future behavior patterns and produce unrealistically low error.
+If the dataset contains a timestamp like `last_dt`, random train/validation splits are misleading. Sort by time and validate with `TimeSeriesSplit` so that later observations are predicted from earlier ones. This matters even if `last_dt` is sparse, because the model should not learn future review activity patterns during validation.
 
-Useful time-derived features include year, month, week of year, weekday, weekend flag, quarter, and elapsed days from a reference point. For sparse review data, missing dates can be mapped to a sentinel and paired with a `has_recent_review` or `has_reviews` indicator.
+The safest temporal features in this dataset are recency and calendar buckets derived from `last_dt`. Useful examples:
+- `days_since_last_review`
+- `weeks_since_last_review`
+- review month
+- review quarter
+- review weekday
+- weekend indicator
+- missing-date flag for listings with no reviews yet
 
-Temporal signals become more useful when combined with listing metadata. Interactions such as `borough x weekday`, `room_type x month`, or `price x recency` can approximate seasonality without requiring sequence models.
+Do not treat missing `last_dt` as generic noise. In rental data, a missing review date often means the listing is new, inactive, or review-free. Encode this state explicitly with:
+- `has_last_dt`
+- `no_reviews_yet`
+- a large sentinel recency value
 
-For competitions with daily or near-daily booking behavior, check whether very old listings or listings with no recent reviews behave differently from recently active ones. A monotonic recency feature often helps boosted trees.
+Temporal features become stronger when paired with listing structure. Good interactions include:
+- `location_cluster x review_month`
+- `type_house x review_weekday`
+- `log_sum x recency`
+- `min_days x recency_bucket`
+
+Because this dataset does not provide a full time series per listing, classical target lags are usually impossible or unsafe. Focus instead on proxy temporal signals:
+- freshness of listing activity
+- seasonality bucket from the last known review
+- whether the listing looks recently active versus stale
+
+For evaluation, keep the ordering rule simple and reproducible. Parse `last_dt` with `errors="coerce"`, sort on it after filling missing values with a sentinel date, and use the same ordering rule across folds. In short-term rental problems, a careful split strategy is often as important as the feature formulas themselves.

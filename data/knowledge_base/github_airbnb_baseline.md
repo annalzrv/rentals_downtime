@@ -1,7 +1,27 @@
 # GitHub NYC Airbnb Baseline
 
-An accessible public baseline for Airbnb-style price prediction is the repository "Predicting Airbnb Prices in New York City". It uses listing metadata such as location, room type, review counts, host behavior, and cross-validation to compare multiple regressors. Even when the exact target differs from our Kaggle task, the repository is useful as a feature-engineering reference because it highlights location, room type, reviews, and host-level patterns as the strongest drivers.
+Public Airbnb baselines on GitHub usually agree on one thing: location, room type, reviews, and host behavior dominate early model quality. Even when the exact target differs from our Kaggle task, these projects are useful because they show which feature families are consistently strong on New York rental data.
 
-The practical lesson for our pipeline is to keep the RAG output concrete and tabular. Retrieved ideas should map cleanly to columns already present in the dataframe, and the coder should receive a compact specification such as "log-transform price", "encode borough and room type", "derive recency from last review date", and "model host portfolio size".
+The most reusable patterns from public baselines are:
+- treat `type_house` as a major price-tier signal
+- encode borough and neighborhood information
+- derive spatial features from `lat` and `lon`
+- use review counts and review freshness
+- separate casual hosts from multi-listing hosts
 
-Another useful point from this baseline is that gradient-boosting families tend to outperform simpler linear baselines once categorical and skewed numeric signals are cleaned up. That aligns with our choice to steer the coder toward CatBoost or LightGBM.
+What is often missing from lightweight public baselines is a better second wave of features. For our RAG system, we should go beyond the usual `log_sum + distance + has_reviews` trio and try richer but still implementable ideas:
+- neighborhood rarity indicator
+- coordinate bins or clusters
+- price bucket within borough
+- `type_house x borough`
+- `type_house x log_sum`
+- `recency_bucket x borough`
+- `professional_host x room_type`
+
+Another lesson from public baselines is that small text signals can help. The listing title `name` is often ignored, but simple text-derived features may add useful texture:
+- presence of marketing keywords
+- mention of room type in title
+- title length and token count
+- missing-title indicator
+
+The practical takeaway for our pipeline is that retrieved ideas should stay concrete and column-grounded. A useful RAG answer is not “improve spatial modeling”, but something implementable like “bucket lat/lon into geo cells and add a rare-neighborhood flag from location frequency”.

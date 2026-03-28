@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("MOCK_LLM", "1")
 
-from rentals_agents.graph.nodes import rag_node
+import rentals_agents.graph.nodes as graph_nodes
 from rentals_agents.state import initial_state
 from rentals_agents.rag import generate_mock_feature_plan, retrieve_knowledge
 from rentals_agents.rag.knowledge_base import build_knowledge_chunks, load_source_documents
@@ -12,7 +12,7 @@ from rentals_agents.rag.knowledge_base import build_knowledge_chunks, load_sourc
 
 def test_knowledge_base_documents_load():
     documents = load_source_documents("data/knowledge_base")
-    assert len(documents) >= 4
+    assert len(documents) >= 8
     assert any("CatBoost" in document.title for document in documents)
 
 
@@ -50,8 +50,8 @@ def test_rag_node_in_mock_mode_does_not_call_retrieval(monkeypatch):
     def fail(*args, **kwargs):
         raise AssertionError("retrieve_knowledge should not be called in MOCK_LLM mode")
 
-    monkeypatch.setattr("rentals_agents.graph.nodes.MOCK_LLM", True)
-    monkeypatch.setattr("rentals_agents.graph.nodes.retrieve_knowledge", fail)
+    monkeypatch.setattr(graph_nodes.config, "MOCK_LLM", True)
+    monkeypatch.setattr(graph_nodes, "retrieve_knowledge", fail)
 
     state = initial_state()
     state["df_info"] = (
@@ -59,5 +59,5 @@ def test_rag_node_in_mock_mode_does_not_call_retrieval(monkeypatch):
         "amt_reviews, last_dt, avg_reviews, total_host"
     )
 
-    result = rag_node(state)
+    result = graph_nodes.rag_node(state)
     assert len(result["features_plan"]) >= 5
