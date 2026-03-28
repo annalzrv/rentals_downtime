@@ -119,9 +119,8 @@ def rag_node(state: State) -> dict:
 
     Mock: returns a hardcoded, realistic feature plan.
     """
-    retrieval = retrieve_knowledge(state["df_info"])
-
     if not MOCK_LLM:
+        retrieval = retrieve_knowledge(state["df_info"])
         user_msg = build_rag_user_message(state["df_info"], retrieval.context)
         try:
             raw = chat(LLM_MODEL, RAG_SYSTEM_PROMPT, user_msg)
@@ -129,11 +128,11 @@ def rag_node(state: State) -> dict:
             ideas: list[str] = parsed.get("ideas", [])
             report = evaluate_feature_plan(ideas)
             if not report.is_adequate:
-                ideas = generate_mock_feature_plan(state["df_info"])
+                ideas = generate_mock_feature_plan(state["df_info"], retrieval.context)
         except (OllamaError, ValueError) as exc:
             # Degrade gracefully: return a minimal fallback plan
             ideas = [f"[RAG error — using fallback] {exc}"]
-            ideas.extend(generate_mock_feature_plan(state["df_info"]))
+            ideas.extend(generate_mock_feature_plan(state["df_info"], retrieval.context))
         return {"features_plan": ideas}
 
     return {"features_plan": generate_mock_feature_plan(state["df_info"])}

@@ -1,12 +1,13 @@
 """Tests for vector RAG, source provenance, and prompt-quality helpers."""
 
 import os
+import warnings
 
 os.environ.setdefault("MOCK_LLM", "1")
 
 from rentals_agents.rag.evaluation import build_rag_user_message, evaluate_feature_plan
 from rentals_agents.rag.knowledge_base import load_source_documents
-from rentals_agents.rag.service import retrieve_knowledge
+from rentals_agents.rag.service import RetrievalFallbackWarning, retrieve_knowledge
 
 
 def test_source_manifest_enriches_documents():
@@ -49,3 +50,22 @@ def test_build_rag_user_message_includes_retrieved_context():
     message = build_rag_user_message("df info", "retrieved snippets here")
     assert "Dataset description" in message
     assert "Retrieved domain context" in message
+
+
+def test_expected_chroma_failure_falls_back_with_warning(monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("vector backend unavailable")
+
+    monkeypatch.setattr("rentals_agents.rag.service._run_chroma_retrieval", broken)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = retrieve_knowledge(
+            "Columns: last_dt, sum, location_cluster",
+            top_k=2,
+            backend="chroma",
+            embedding_backend="hash",
+        )
+
+    assert result.backend == "lexical"
+    assert any(item.category is RetrievalFallbackWarning for item in caught)

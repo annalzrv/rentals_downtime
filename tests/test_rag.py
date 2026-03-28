@@ -4,6 +4,8 @@ import os
 
 os.environ.setdefault("MOCK_LLM", "1")
 
+from rentals_agents.graph.nodes import rag_node
+from rentals_agents.state import initial_state
 from rentals_agents.rag import generate_mock_feature_plan, retrieve_knowledge
 from rentals_agents.rag.knowledge_base import build_knowledge_chunks, load_source_documents
 
@@ -42,3 +44,20 @@ def test_mock_feature_plan_uses_dataset_signals():
     assert len(plan) >= 5
     assert any("last_dt" in idea or "review" in idea.lower() for idea in plan)
     assert any("location_cluster" in idea or "borough" in idea.lower() for idea in plan)
+
+
+def test_rag_node_in_mock_mode_does_not_call_retrieval(monkeypatch):
+    def fail(*args, **kwargs):
+        raise AssertionError("retrieve_knowledge should not be called in MOCK_LLM mode")
+
+    monkeypatch.setattr("rentals_agents.graph.nodes.MOCK_LLM", True)
+    monkeypatch.setattr("rentals_agents.graph.nodes.retrieve_knowledge", fail)
+
+    state = initial_state()
+    state["df_info"] = (
+        "Columns: location_cluster, type_house, lat, lon, sum, min_days, "
+        "amt_reviews, last_dt, avg_reviews, total_host"
+    )
+
+    result = rag_node(state)
+    assert len(result["features_plan"]) >= 5
