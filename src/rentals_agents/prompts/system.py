@@ -81,30 +81,20 @@ the `haversine` package — it is not installed. Implement haversine with numpy 
 feature or in any computation applied to the test set. It is the label you are predicting.
 
 Your task is to write a complete, self-contained Python script that:
-1. Loads data/train.csv and data/test.csv (paths are always relative to cwd).
-2. Applies the feature-engineering ideas (handle NaN in last_dt and avg_reviews).
-3. Trains CatBoost with the hyperparameters specified below.
-4. Evaluates with TimeSeriesSplit cross-validation (NOT random split — data has \
-temporal structure via last_dt ordering).
-5. Computes and prints MSE on the validation folds.
-6. Generates submission.csv with columns: index,prediction
-
-Baseline features that MUST always be included (proven to help):
-- Date components from last_dt: last_dt_year, last_dt_month, last_dt_day, last_dt_dow \
-  (use dt.year / dt.month / dt.day / dt.dayofweek; NaN stays NaN — CatBoost handles it)
-- Text length features: name_len, name_words, host_name_len, host_name_words \
-  (use str.len() and str.split().str.len() on fillna("") columns)
-- avg_reviews filled with 0 where NaN
+1. Starts from the MANDATORY baseline below — do not remove any of it.
+2. Adds the feature-engineering ideas from the plan ON TOP of the baseline.
+3. Evaluates with TimeSeriesSplit CV and prints MSE.
+4. Retrains on full data and writes submission.csv.
 
 Categorical columns guidance:
-- Keep name, _id, host_name, location_cluster, location, type_house as categorical \
-  strings — do NOT drop them. CatBoost exploits listing identity and host patterns.
-- Fill NaN in all string columns with "unknown" before passing to CatBoost.
-- DO NOT use pd.get_dummies() on any column.
-- CRITICAL: ANY column with dtype object in X must be in cat_cols or CatBoost crashes. \
-  After defining X, always set: cat_cols = [c for c in X.columns if X[c].dtype == "object"]
+- name, _id, host_name, location_cluster, location, type_house are categorical — keep them.
+- Fill NaN in all string columns with "unknown".
+- DO NOT use pd.get_dummies().
+- CRITICAL: after defining X, always set:
+  cat_cols = [c for c in X.columns if X[c].dtype == 'object']
+  Never manually list cat_cols — auto-detect from dtype to avoid CatBoost crashes.
 
-Cross-validation template you MUST follow:
+Script template — the MANDATORY BASELINE section must appear verbatim:
 ```
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error
@@ -113,13 +103,14 @@ import pandas as pd
 from catboost import CatBoostRegressor
 
 df_train = pd.read_csv("data/train.csv")
-df_test = pd.read_csv("data/test.csv")
+df_test  = pd.read_csv("data/test.csv")
 df_train['last_dt'] = pd.to_datetime(df_train['last_dt'], errors='coerce')
-df_test['last_dt'] = pd.to_datetime(df_test['last_dt'], errors='coerce')
+df_test['last_dt']  = pd.to_datetime(df_test['last_dt'],  errors='coerce')
+
 # MANDATORY — sort train by time so TimeSeriesSplit is actually temporal. DO NOT remove.
 df_train = df_train.sort_values('last_dt', na_position='last').reset_index(drop=True)
 
-# STEP 1 — feature engineering on BOTH df_train AND df_test (do NOT use target)
+# ── MANDATORY BASELINE FEATURES (proven ~9550 MSE — do not remove) ────────────
 for df in [df_train, df_test]:
     df['last_dt_year']  = df['last_dt'].dt.year
     df['last_dt_month'] = df['last_dt'].dt.month
@@ -134,18 +125,20 @@ for col in ['name', '_id', 'host_name', 'location_cluster', 'location', 'type_ho
     df_test[col]  = df_test[col].astype(str).fillna('unknown')
 df_train['avg_reviews'] = df_train['avg_reviews'].fillna(0)
 df_test['avg_reviews']  = df_test['avg_reviews'].fillna(0)
-# ... add more engineered columns to BOTH df_train and df_test here ...
+# ── END MANDATORY BASELINE ────────────────────────────────────────────────────
 
-# STEP 2 — split into X / y / X_test AFTER all feature engineering is done
+# ADD extra features from the plan here (apply to both df_train and df_test):
+# <your additional feature engineering>
+
+# STEP 2 — define X / y / X_test
 DROP_COLS      = ['target', 'last_dt']
 TEST_DROP_COLS = ['last_dt']
 X      = df_train.drop(columns=DROP_COLS)
 y      = df_train['target'].values
 X_test = df_test.drop(columns=TEST_DROP_COLS)
-# Auto-detect all string columns — never pass object dtype as numeric to CatBoost
 cat_cols = [c for c in X.columns if X[c].dtype == 'object']
 
-# STEP 3 — estimate MSE with TimeSeriesSplit (fast CV model)
+# STEP 3 — CV MSE estimate (fast)
 cv_model = CatBoostRegressor(iterations=500, learning_rate=0.05, depth=8,
                              l2_leaf_reg=5, loss_function='RMSE',
                              cat_features=cat_cols, random_seed=42, verbose=0)
@@ -160,18 +153,11 @@ for train_idx, val_idx in tscv.split(X):
 mse = float(np.mean(mse_scores))
 print(f"MSE: {mse}")
 
-# STEP 4 — retrain on full data with more iterations for best submission
+# STEP 4 — retrain on full data for best submission
 final_model = CatBoostRegressor(iterations=2500, learning_rate=0.03, depth=8,
                                 l2_leaf_reg=5, loss_function='RMSE',
                                 cat_features=cat_cols, random_seed=42, verbose=0)
 final_model.fit(X, y)
-test_preds = np.clip(final_model.predict(X_test), 0, None)
-submission = pd.DataFrame({"index": range(len(test_preds)), "prediction": test_preds})
-submission.to_csv("submission.csv", index=False)
-```
-
-Submission generation template:
-```
 test_preds = np.clip(final_model.predict(X_test), 0, None)
 submission = pd.DataFrame({"index": range(len(test_preds)), "prediction": test_preds})
 submission.to_csv("submission.csv", index=False)

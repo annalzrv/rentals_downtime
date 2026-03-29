@@ -8,7 +8,7 @@ import os
 
 # ── Quality / stopping criteria ──────────────────────────────────────────────
 # Supervisor will be told this value; guardrails enforce hard stop when met.
-TARGET_MSE_THRESHOLD: float = float(os.getenv("TARGET_MSE", "500.0"))
+TARGET_MSE_THRESHOLD: float = float(os.getenv("TARGET_MSE", "9200.0"))
 
 # Hard cap on graph iterations regardless of MSE.
 MAX_GRAPH_ITERATIONS: int = int(os.getenv("MAX_ITER", "10"))
