@@ -145,30 +145,34 @@ X_test = df_test.drop(columns=TEST_DROP_COLS)
 # Auto-detect all string columns — never pass object dtype as numeric to CatBoost
 cat_cols = [c for c in X.columns if X[c].dtype == 'object']
 
-# STEP 3 — train with TimeSeriesSplit
-model = CatBoostRegressor(iterations=2500, learning_rate=0.03, depth=8,
-                          l2_leaf_reg=5, loss_function='RMSE',
-                          cat_features=cat_cols, random_seed=42, verbose=0)
+# STEP 3 — estimate MSE with TimeSeriesSplit (fast CV model)
+cv_model = CatBoostRegressor(iterations=500, learning_rate=0.05, depth=8,
+                             l2_leaf_reg=5, loss_function='RMSE',
+                             cat_features=cat_cols, random_seed=42, verbose=0)
 tscv = TimeSeriesSplit(n_splits=5)
 mse_scores = []
 for train_idx, val_idx in tscv.split(X):
     X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
     y_tr, y_val = y[train_idx], y[val_idx]
-    model.fit(X_tr, y_tr)
-    preds = model.predict(X_val)
+    cv_model.fit(X_tr, y_tr)
+    preds = cv_model.predict(X_val)
     mse_scores.append(mean_squared_error(y_val, preds))
 mse = float(np.mean(mse_scores))
 print(f"MSE: {mse}")
 
-# STEP 4 — generate submission (test_preds MUST be defined here)
-test_preds = np.clip(model.predict(X_test), 0, None)
+# STEP 4 — retrain on full data with more iterations for best submission
+final_model = CatBoostRegressor(iterations=2500, learning_rate=0.03, depth=8,
+                                l2_leaf_reg=5, loss_function='RMSE',
+                                cat_features=cat_cols, random_seed=42, verbose=0)
+final_model.fit(X, y)
+test_preds = np.clip(final_model.predict(X_test), 0, None)
 submission = pd.DataFrame({"index": range(len(test_preds)), "prediction": test_preds})
 submission.to_csv("submission.csv", index=False)
 ```
 
 Submission generation template:
 ```
-test_preds = np.clip(model.predict(X_test), 0, None)
+test_preds = np.clip(final_model.predict(X_test), 0, None)
 submission = pd.DataFrame({"index": range(len(test_preds)), "prediction": test_preds})
 submission.to_csv("submission.csv", index=False)
 ```
