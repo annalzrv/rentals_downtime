@@ -16,6 +16,11 @@ from rentals_agents.graph.builder import build_graph
 from rentals_agents.state import initial_state
 from rentals_agents.benchmark import Benchmark
 import rentals_agents.config as config
+import os
+
+# Disable LangSmith tracing in mock mode — no point tracing stub runs
+if config.MOCK_LLM:
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
 
 
 def main() -> None:
