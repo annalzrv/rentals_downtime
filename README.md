@@ -26,16 +26,21 @@ flowchart LR
 | Node | Type | Owner |
 |------|------|-------|
 | `Data_Profiler` | Python function | MLOps (Борис) |
-| `RAG_Domain_Expert` | LLM (Llama/Mistral) | RAG engineer (Тимофей) |
-| `Coder_Agent` | LLM (Qwen2.5-Coder) | Architect (Анна) |
+| `RAG_Domain_Expert` | LLM (Qwen 72B) | RAG engineer (Тимофей) |
+| `Coder_Agent` | LLM (Qwen2.5‑Coder 7B) | Architect (Анна) |
 | `Code_Executor` | Python + subprocess | DevOps (Андрей) |
-| `Supervisor_Agent` | LLM (Llama/Mistral) | Architect (Анна) |
+| `Supervisor_Agent` | LLM (Qwen 72B) | Architect (Анна) |
 
-### Agentic routing & guardrails
+### Routing & guardrails (Python‑enforced)
 
-After `Code_Executor`: **deterministic** branch — error → `Coder_Agent`, success → `Supervisor_Agent`.
+After `Code_Executor`: **deterministic** 
+- execution_ok = True → `Supervisor_Agent`
 
-After `Supervisor_Agent`: LLM proposes `next_node`, then **`route_after_supervisor`** applies guardrails in priority order:
+- execution_ok = False and consecutive_errors < 3 → `Coder_Agent`
+
+- consecutive_errors >= 3 → `Supervisor_Agent` (let Supervisor propose fallback).
+
+- After `Supervisor_Agent`: LLM proposes `next_node`, then **`route_after_supervisor`** applies guardrails in priority order:
 
 1. `iteration_count >= MAX_GRAPH_ITERATIONS` → force **END**
 2. `mse <= TARGET_MSE_THRESHOLD` → force **END**
@@ -51,7 +56,8 @@ The LLM **never** has final say on stopping — Python guardrails always run las
 ### 1. Install
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev]"          # core + test dependencies
+pip install -e ".[dev,rag]"      # + ChromaDB / ONNX for vector RAG
 ```
 
 Requires Python 3.11+.
@@ -64,27 +70,19 @@ pytest tests/ -v
 
 `MOCK_LLM=1` is the default. All tests pass without a running Ollama server.
 
-### 2.5. Install full vector-RAG stack
-
-```bash
-pip install -e ".[dev,rag]"
-```
-
-The vector backend uses ChromaDB. By default it tries Chroma + ONNX MiniLM
-(`all-MiniLM-L6-v2`) and falls back to lexical retrieval if the embedding model
-is unavailable.
-
 ### 3. Run with real models
 
 Install Ollama: https://ollama.com
 
 ```bash
 ollama pull qwen2.5-coder:7b
-ollama pull llama3:8b
-
+ollama pull qwen2.5:72b
+```
+Then
+```bash
 MOCK_LLM=0 python main.py
 ```
-
+Make sure `data/train.csv` and `data/test.csv` exist (see Dataset).
 ---
 
 ## Configuration
@@ -94,13 +92,13 @@ All settings via environment variables (no `.env` file required):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MOCK_LLM` | `1` | `1` = mock mode (no Ollama); `0` = real LLM calls |
-| `DATA_DIR` | `data` | Directory with train.csv / test.csv (relative to project root) |
-| `TARGET_MSE` | `500.0` | Stop when MSE ≤ this value |
+| `DATA_DIR` | `data` | Directory with `train.csv` / `test.csv` (relative to project root) |
+| `TARGET_MSE` | `9200.0` | Stop when MSE ≤ this value |
 | `MAX_ITER` | `10` | Hard iteration cap |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `QWEN_CODER_MODEL` | `qwen2.5-coder:7b` | Model for Coder_Agent |
-| `LLM_MODEL` | `llama3:8b` | Model for RAG + Supervisor |
-| `OLLAMA_TIMEOUT` | `120.0` | Request timeout (seconds) |
+| `QWEN_CODER_MODEL` | `qwen2.5-coder:7b` | Model for `Coder_Agent` |
+| `LLM_MODEL` | `qwen2.5:72b` | Model for `RAG_Domain_Expert` + `Supervisor_Agent` |
+| `OLLAMA_TIMEOUT` | `300.0` | Request timeout (seconds) |
 | `KNOWLEDGE_BASE_DIR` | `data/knowledge_base` | Local RAG corpus (`.md`/`.txt`) |
 | `RAG_TOP_K` | `3` | Number of retrieved chunks passed to RAG_Domain_Expert |
 | `RAG_CHUNK_SIZE` | `900` | Chunk size for local knowledge files |
@@ -114,23 +112,24 @@ All settings via environment variables (no `.env` file required):
 
 ---
 
-## Benchmarking & Experiment Log
+## Benchmarking
 
-After each pipeline run, two files are created in the project root:
+After each pipeline run, the Benchmark singleton collects:
 
-- **`report.txt`** — human-readable summary with:
-  - total execution time
-  - total input/output tokens (collected from all LLM calls)
-  - final MSE
+- Total execution time
 
-- **`experiment_log.json`** — structured JSON log with:
-  - timestamp, duration
-  - token counts
-  - final MSE, iteration count, MSE history
-  - supervisor reasoning
-  - complete configuration snapshot (target threshold, max iterations, models, etc.)
+- Total input / output tokens (from all LLM calls)
 
-### Example `report.txt`
+- Final MSE
+
+To print a report:
+
+```bash
+from rentals_agents.benchmark import Benchmark
+print(Benchmark().report())
+```
+
+### Example output:
 
 ```text
 === Benchmark Report ===
@@ -141,30 +140,7 @@ Total tokens: 19134
 Final MSE: 425.6
 ```
 
-### Example `experiment_log.json`
-```json
-{
-  "timestamp": 1712345678.123,
-  "duration_seconds": 45.23,
-  "total_input_tokens": 12345,
-  "total_output_tokens": 6789,
-  "final_mse": 425.6,
-  "iteration_count": 3,
-  "mse_history": [4230.5, 1250.3, 425.6],
-  "supervisor_reasoning": "MSE improved, but still above threshold — continue with new features",
-  "config": {
-    "target_mse_threshold": 500.0,
-    "max_iterations": 10,
-    "mock_llm": false,
-    "data_dir": "data",
-    "ollama_base_url": "http://localhost:11434",
-    "qwen_coder_model": "qwen2.5-coder:7b",
-    "llm_model": "llama3:8b"
-  }
-}
-```
-
-These files help you compare different runs, debug performance, and reproduce results.
+Note: Automatic writing to `report.txt` / `experiment_log.json` is not implemented in this version – you can extend Benchmark or call it from your own script.
 
 ## Dataset
 
@@ -187,7 +163,7 @@ These files help you compare different runs, debug performance, and reproduce re
 | `total_host` | Number of listings by this host |
 | `target` | **Target variable** (float, 0–365) |
 
-Train: 36,671 rows. Test: 12,264 rows. Submission: `index,prediction`.
+Train: 36,671 rows. Test: 12,264 rows. Submission: `index,prediction`(CSV).
 
 ---
 
@@ -195,82 +171,59 @@ Train: 36,671 rows. Test: 12,264 rows. Submission: `index,prediction`.
 
 ```
 src/rentals_agents/
-  config.py          # env-based constants
-  state.py           # TypedDict State — team contract
+  config.py          # env‑based constants
+  state.py           # TypedDict State – team contract
   routing.py         # route_after_executor, route_after_supervisor (guardrails)
   llm/
     ollama_client.py # HTTP client for Ollama
-    json_utils.py    # parse LLM JSON responses
+    json_utils.py    # parse JSON from LLM responses
   rag/
-    knowledge_base.py # load and chunk local source documents
-    retriever.py      # lexical retriever for top-k chunks
+    knowledge_base.py # load and chunk source documents
+    retriever.py      # lexical retriever for top‑k chunks
     vector_store.py   # ChromaDB vector retriever + embedding backends
-    evaluation.py     # prompt-quality and feature-plan adequacy checks
-    service.py        # prompt-ready retrieval API for rag_node
+    evaluation.py     # prompt‑quality and feature‑plan adequacy checks
+    service.py        # prompt‑ready retrieval API for rag_node
   prompts/
     system.py        # system prompts for RAG, Coder, Supervisor
   graph/
-    nodes.py         # node functions (mock + real stubs)
+    nodes.py         # node functions (mock + real implementations)
     builder.py       # StateGraph wiring
+  benchmark.py       # singleton for token & timing metrics
 tests/
   test_routing.py    # guardrail unit tests (16 cases)
-  test_graph_smoke.py  # end-to-end mock graph run
+  test_graph_smoke.py  # end‑to‑end mock graph run
 ```
 
-## For teammates
+## Development notes
 
-### Implementing your module
+### Implementing a node
 
-All nodes share the same contract: accept `state: State`, return `dict` with updated keys only.
+All nodes accept `state: State` and return a `dict` with only the keys they update.
+See `state.py` for the exact field contracts.
 
-**DevOps (Code_Executor):** replace `executor_node` in `graph/nodes.py`. Your function must set:
-```python
-return {
-    "execution_result": "<stdout+stderr>",
-    "execution_ok": True | False,
-    "metrics": {"mse": <float>},
-    "mse_history": [<float>],       # append ONE value; reducer accumulates
-    "iteration_count": state["iteration_count"] + 1,
-}
-```
+- `data_profiler_node` → `{"df_info": str}`
 
-**RAG engineer (RAG_Domain_Expert):** replace `rag_node`. Your function must set:
-```python
-return {"features_plan": ["idea 1", "idea 2", ...]}
-```
+- `rag_node` → `{"features_plan": list[str]}`
 
-**MLOps/Borya SuperStar (Data_Profiler + metrics):**
-- Replace `data_profiler_node` — set `{"df_info": "<text summary>"}`. DONE!!
-- After your CV code runs, write MSE to `metrics` and append to `mse_history` in `executor_node`. DONE!!
-The repository now includes a local RAG corpus in `data/knowledge_base/` plus a
-retrieval layer in `src/rentals_agents/rag/`. The current implementation is
-hybrid and CI-friendly:
-- Primary path: ChromaDB vector retrieval with ONNX MiniLM (`all-MiniLM-L6-v2`)
-- Offline/test path: lexical fallback or hash embeddings
+- `coder_node` → `{"generated_code": str}`
 
-The knowledge base now also carries explicit source provenance in
-`data/knowledge_base/sources.json`, so each retrieved chunk can be traced back
-to its external material.
+- `executor_node` → must set `execution_result`, `execution_ok`, `metrics`, `mse_history` (append one value), `iteration_count`, `consecutive_errors`
 
-### RAG prompt evaluation
+- `supervisor_node` → `{"next_node": str, "supervisor_reasoning": str}`
 
-To test how the real reasoning model reacts to retrieved context:
+### Adding new features
+1. Update `State` TypedDict if new fields are needed.
 
-```bash
-MOCK_LLM=0 python -m rentals_agents.rag.prompt_eval
-```
+2. Add corresponding keys in the returning dict of your node.
 
-This runs a small regression suite of dataset summaries, feeds retrieved
-context into the RAG prompt, and checks whether the returned feature plan covers
-the main signal families we expect: location, time, price, reviews, and host behavior.
+3. Extend routing logic in routing.py if necessary.
 
-**MLOps/Borya (Data_Profiler + metrics):**
-- Replace `data_profiler_node` — set `{"df_info": "<text summary>"}`.
-- After your CV code runs, write MSE to `metrics` and append to `mse_history` in `executor_node`.
-- `target_threshold` comes from `config.TARGET_MSE_THRESHOLD`; pass it to Supervisor prompt via `supervisor_system_prompt()`.
+## Troubleshooting
 
-### State fields reference
-
-See `src/rentals_agents/state.py` for the full TypedDict with field-level docstrings.
-
-Key note: **`mse_history` uses a LangGraph reducer** (`operator.add`). Always return `{"mse_history": [new_value]}` — never the full list — or you will get double-appending.
+| Problem | Likely cause | Solution |
+|------|------|-------|
+| `OllamaError: Cannot reach Ollama` | Ollama not running or wrong `OLLAMA_BASE_URL` | Run `ollama serve`, check URL |
+| `JSON parse error` in LLM response | Model did not follow output schema | Check system prompt; increase `temperature` |
+| `pd.get_dummies() is banned` | Coder used one‑hot encoding | The executor rejects it – instruct model to use CatBoost native categoricals |
+| `submission.csv validation error` | Wrong column names or non‑finite predictions | Coder must write `index,prediction` with numeric values |
+| `ChromaDB fails in CI` | ONNX model download or cache permission | Set `RAG_RETRIEVER_BACKEND=lexical` or use `MOCK_LLM=1` |
