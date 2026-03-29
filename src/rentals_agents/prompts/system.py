@@ -83,24 +83,26 @@ feature or in any computation applied to the test set. It is the label you are p
 Your task is to write a complete, self-contained Python script that:
 1. Loads data/train.csv and data/test.csv (paths are always relative to cwd).
 2. Applies the feature-engineering ideas (handle NaN in last_dt and avg_reviews).
-3. Trains a gradient-boosting model (CatBoost preferred; LightGBM as fallback).
+3. Trains CatBoost with the hyperparameters specified below.
 4. Evaluates with TimeSeriesSplit cross-validation (NOT random split — data has \
 temporal structure via last_dt ordering).
 5. Computes and prints MSE on the validation folds.
 6. Generates submission.csv with columns: index,prediction
 
+Baseline features that MUST always be included (proven to help):
+- Date components from last_dt: last_dt_year, last_dt_month, last_dt_day, last_dt_dow \
+  (use dt.year / dt.month / dt.day / dt.dayofweek; NaN stays NaN — CatBoost handles it)
+- Text length features: name_len, name_words, host_name_len, host_name_words \
+  (use str.len() and str.split().str.len() on fillna("") columns)
+- avg_reviews filled with 0 where NaN
+
 Categorical columns guidance:
-- location_cluster, location, type_house are categorical strings.
-- DO NOT use pd.get_dummies() — it returns a DataFrame and cannot be assigned \
-to a single column.
-- Pass them directly as strings and list them in CatBoostRegressor's \
-cat_features parameter. CatBoost handles categoricals natively.
-- Fill NaN in string columns with "unknown" before passing to CatBoost.
-- CRITICAL: ANY column with dtype object (string) in X must be in cat_cols. \
-If you create new string interaction columns (e.g. borough + "_" + room_type), \
-they are also object dtype — CatBoost will crash if they are not listed in cat_cols. \
-The safest approach: after defining X, set cat_cols = [c for c in X.columns if X[c].dtype == "object"]. \
-Do NOT manually track cat_cols — auto-detect from X.
+- Keep name, _id, host_name, location_cluster, location, type_house as categorical \
+  strings — do NOT drop them. CatBoost exploits listing identity and host patterns.
+- Fill NaN in all string columns with "unknown" before passing to CatBoost.
+- DO NOT use pd.get_dummies() on any column.
+- CRITICAL: ANY column with dtype object in X must be in cat_cols or CatBoost crashes. \
+  After defining X, always set: cat_cols = [c for c in X.columns if X[c].dtype == "object"]
 
 Cross-validation template you MUST follow:
 ```
@@ -118,27 +120,35 @@ df_test['last_dt'] = pd.to_datetime(df_test['last_dt'], errors='coerce')
 df_train = df_train.sort_values('last_dt', na_position='last').reset_index(drop=True)
 
 # STEP 1 — feature engineering on BOTH df_train AND df_test (do NOT use target)
-# Apply every new column to both df_train and df_test before defining X / X_test.
-cat_cols = ["location_cluster", "location", "type_house"]
-for c in cat_cols:
-    df_train[c] = df_train[c].fillna("unknown")
-    df_test[c] = df_test[c].fillna("unknown")
+for df in [df_train, df_test]:
+    df['last_dt_year']  = df['last_dt'].dt.year
+    df['last_dt_month'] = df['last_dt'].dt.month
+    df['last_dt_day']   = df['last_dt'].dt.day
+    df['last_dt_dow']   = df['last_dt'].dt.dayofweek
+    for col in ['name', 'host_name']:
+        s = df[col].fillna('').astype(str)
+        df[f'{col}_len']   = s.str.len()
+        df[f'{col}_words'] = s.str.split().str.len()
+for col in ['name', '_id', 'host_name', 'location_cluster', 'location', 'type_house']:
+    df_train[col] = df_train[col].astype(str).fillna('unknown')
+    df_test[col]  = df_test[col].astype(str).fillna('unknown')
 df_train['avg_reviews'] = df_train['avg_reviews'].fillna(0)
-df_test['avg_reviews'] = df_test['avg_reviews'].fillna(0)
+df_test['avg_reviews']  = df_test['avg_reviews'].fillna(0)
 # ... add more engineered columns to BOTH df_train and df_test here ...
 
 # STEP 2 — split into X / y / X_test AFTER all feature engineering is done
-DROP_COLS = ['target', 'name', '_id', 'host_name', 'last_dt']
-TEST_DROP_COLS = ['name', '_id', 'host_name', 'last_dt']
-X = df_train.drop(columns=DROP_COLS)
-y = df_train['target'].values
+DROP_COLS      = ['target', 'last_dt']
+TEST_DROP_COLS = ['last_dt']
+X      = df_train.drop(columns=DROP_COLS)
+y      = df_train['target'].values
 X_test = df_test.drop(columns=TEST_DROP_COLS)
 # Auto-detect all string columns — never pass object dtype as numeric to CatBoost
-cat_cols = [c for c in X.columns if X[c].dtype == "object"]
+cat_cols = [c for c in X.columns if X[c].dtype == 'object']
 
 # STEP 3 — train with TimeSeriesSplit
-model = CatBoostRegressor(iterations=500, learning_rate=0.05, depth=6,
-                          cat_features=cat_cols, verbose=0)
+model = CatBoostRegressor(iterations=2500, learning_rate=0.03, depth=8,
+                          l2_leaf_reg=5, loss_function='RMSE',
+                          cat_features=cat_cols, random_seed=42, verbose=0)
 tscv = TimeSeriesSplit(n_splits=5)
 mse_scores = []
 for train_idx, val_idx in tscv.split(X):
@@ -151,14 +161,14 @@ mse = float(np.mean(mse_scores))
 print(f"MSE: {mse}")
 
 # STEP 4 — generate submission (test_preds MUST be defined here)
-test_preds = model.predict(X_test)
+test_preds = np.clip(model.predict(X_test), 0, None)
 submission = pd.DataFrame({"index": range(len(test_preds)), "prediction": test_preds})
 submission.to_csv("submission.csv", index=False)
 ```
 
 Submission generation template:
 ```
-test_preds = model.predict(X_test)
+test_preds = np.clip(model.predict(X_test), 0, None)
 submission = pd.DataFrame({"index": range(len(test_preds)), "prediction": test_preds})
 submission.to_csv("submission.csv", index=False)
 ```
