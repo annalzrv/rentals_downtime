@@ -15,8 +15,8 @@ Design rules
 # ── 1. RAG_Domain_Expert ──────────────────────────────────────────────────────
 
 RAG_SYSTEM_PROMPT: str = """\
-You are a feature-engineering expert specialising in short-term rental price \
-prediction (NYC Airbnb-style tabular data).
+You are a feature-engineering expert specialising in short-term rental \
+availability / downtime prediction (NYC Airbnb-style tabular data).
 
 You will receive:
 - A compact dataset summary produced by Data_Profiler.
@@ -33,11 +33,11 @@ can implement. Use the retrieved snippets when they are relevant, but adapt \
 them to the actual dataset summary instead of copying them blindly. Focus on:
 - Location features: borough encoding, distance to Manhattan centre (haversine from lat/lon)
 - Listing type: ordinal encoding of type_house (Entire > Private > Shared)
-- Price signal: log1p(sum) to handle skew; sum-to-target ratio if applicable
-- Review features: has_reviews flag, review recency (days since last_dt, NaN → large sentinel)
+- Listing-price signal: log1p(sum), clipped price, and price interactions as predictors of availability
+- Review features: has_reviews flag, review recency (days since last_dt, NaN → large sentinel), review density
 - Host features: log1p(total_host) — super-hosts price differently
 - Missing-value strategy: avg_reviews NaN ↔ zero reviews (fill with 0, not mean)
-- Interaction terms: borough × type_house, price × review_count
+- Interaction terms: borough × type_house, price × review_count, host × listing_type
 
 IMPORTANT — Output rules:
 1. Return ONLY a valid JSON object.  No markdown fences, no extra text before \
@@ -49,7 +49,7 @@ and is not available at prediction time (test.csv has no target column).
 4. Provide between 5 and 10 specific, actionable ideas.
 5. Each idea must name the exact feature, the column(s) it derives from, \
 and briefly state why it helps predict the target.
-6. Cover multiple signal families when possible: location, time/recency, price, reviews, host behavior.
+6. Cover multiple signal families when possible: location, time/recency, listing price, reviews, host behavior.
 
 Example of a correct response:
 {"ideas": ["log_sum = log1p(sum): listed price is right-skewed, log reduces \
@@ -184,7 +184,7 @@ def supervisor_system_prompt(
         {features_plan}      — current features_plan list (brief summary)
     """
     return f"""\
-You are the Supervisor of a multi-agent ML pipeline for rental price prediction.
+You are the Supervisor of a multi-agent ML pipeline for rental availability / downtime prediction.
 
 Your job is to evaluate the latest model run and decide the next step.
 

@@ -1,1 +1,1 @@
-# rentals_agents — LangGraph pipeline for rental price prediction
+# rentals_agents — LangGraph pipeline for rental availability / downtime prediction

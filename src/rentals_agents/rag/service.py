@@ -90,8 +90,8 @@ def retrieve_knowledge(
 ) -> RetrievalResult:
     """Retrieve the most relevant knowledge-base chunks for the current dataset."""
     query = (
-        "short term rental price prediction time series feature engineering "
-        "catboost cross validation outliers availability reviews host location "
+        "short term rental availability downtime prediction time series feature engineering "
+        "catboost cross validation outliers reviews host location listing price "
         f"{dataset_summary}"
     )
     final_k = top_k or RAG_TOP_K
