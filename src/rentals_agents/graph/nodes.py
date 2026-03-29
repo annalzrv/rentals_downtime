@@ -278,6 +278,24 @@ def executor_node(state: State) -> dict:
                 "consecutive_errors": prev_consecutive_errors + 1,
             }
 
+        # Pre-execution ban: pd.get_dummies returns a DataFrame, not a Series.
+        # Assigning it to a single column always crashes. CatBoost handles
+        # categoricals natively — just keep string columns as-is.
+        if "pd.get_dummies" in generated_code:
+            return {
+                "execution_result": (
+                    "Pre-execution check failed: pd.get_dummies() is banned.\n"
+                    "CatBoost handles categorical columns natively — do NOT one-hot encode.\n"
+                    "Keep string columns as strings, list them in cat_features, and let CatBoost do the rest.\n"
+                    "Remove every pd.get_dummies() call and re-submit."
+                ),
+                "execution_ok": False,
+                "metrics": {"mse": float("inf")},
+                "mse_history": [float("inf")],
+                "iteration_count": new_iteration_count,
+                "consecutive_errors": prev_consecutive_errors + 1,
+            }
+
         work_dir = Path(os.getcwd())
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_script = Path(tmp_dir) / "agent_script.py"

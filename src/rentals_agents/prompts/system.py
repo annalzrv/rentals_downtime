@@ -31,7 +31,7 @@ Target: target (float, range 0–365 — number of days booked / availability me
 Your task is to suggest a concrete list of feature ideas that a Python engineer \
 can implement. Use the retrieved snippets when they are relevant, but adapt \
 them to the actual dataset summary instead of copying them blindly. Focus on:
-- Location features: borough encoding, distance to Manhattan centre (haversine from lat/lon)
+- Location features: distance to Manhattan centre (haversine from lat/lon), location frequency/rarity — do NOT suggest one-hot or dummy encoding, CatBoost handles categoricals natively
 - Listing type: ordinal encoding of type_house (Entire > Private > Shared)
 - Listing-price signal: log1p(sum), clipped price, and price interactions as predictors of availability
 - Review features: has_reviews flag, review recency (days since last_dt, NaN → large sentinel), review density
