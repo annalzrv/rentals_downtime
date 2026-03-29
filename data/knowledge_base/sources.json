@@ -35,5 +35,9 @@
   "leakage_and_split_rules.md": {
     "title": "Leakage And Split Rules",
     "kind": "internal_synthesis"
+  },
+  "proven_baseline_approach.md": {
+    "title": "Proven Baseline Approach For NYC Rental Availability",
+    "kind": "internal_synthesis"
   }
 }

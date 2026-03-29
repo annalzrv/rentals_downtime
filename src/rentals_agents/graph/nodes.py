@@ -279,14 +279,12 @@ def executor_node(state: State) -> dict:
             }
 
         # Pre-execution ban: pd.get_dummies returns a DataFrame, not a Series.
-        # Assigning it to a single column always crashes. CatBoost handles
-        # categoricals natively — just keep string columns as-is.
         if "pd.get_dummies" in generated_code:
             return {
                 "execution_result": (
                     "Pre-execution check failed: pd.get_dummies() is banned.\n"
                     "CatBoost handles categorical columns natively — do NOT one-hot encode.\n"
-                    "Keep string columns as strings, list them in cat_features, and let CatBoost do the rest.\n"
+                    "Keep string columns as strings and let cat_cols auto-detection handle them.\n"
                     "Remove every pd.get_dummies() call and re-submit."
                 ),
                 "execution_ok": False,
@@ -295,6 +293,22 @@ def executor_node(state: State) -> dict:
                 "iteration_count": new_iteration_count,
                 "consecutive_errors": prev_consecutive_errors + 1,
             }
+
+        # Pre-execution check: submission must use columns "index" and "prediction".
+        if (
+            '"id"' in generated_code or "'id'" in generated_code
+            or '"price"' in generated_code or "'price'" in generated_code
+        ) and "submission" in generated_code:
+            # Heuristic: coder used wrong column names. Give a clear fix.
+            generated_code = generated_code.replace(
+                '"id"', '"index"'
+            ).replace(
+                "'id'", '"index"'
+            ).replace(
+                '"price"', '"prediction"'
+            ).replace(
+                "'price'", '"prediction"'
+            )
 
         work_dir = Path(os.getcwd())
         with tempfile.TemporaryDirectory() as tmp_dir:

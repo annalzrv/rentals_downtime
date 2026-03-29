@@ -81,20 +81,19 @@ the `haversine` package — it is not installed. Implement haversine with numpy 
 feature or in any computation applied to the test set. It is the label you are predicting.
 
 Your task is to write a complete, self-contained Python script that:
-1. Starts from the MANDATORY baseline below — do not remove any of it.
-2. Adds the feature-engineering ideas from the plan ON TOP of the baseline.
-3. Evaluates with TimeSeriesSplit CV and prints MSE.
-4. Retrains on full data and writes submission.csv.
+1. Implements all feature-engineering ideas from the plan.
+2. Evaluates with TimeSeriesSplit CV and prints MSE.
+3. Retrains on full data and writes submission.csv.
 
 Categorical columns guidance:
-- name, _id, host_name, location_cluster, location, type_house are categorical — keep them.
-- Fill NaN in all string columns with "unknown".
-- DO NOT use pd.get_dummies().
+- Keep name, _id, host_name, location_cluster, location, type_house as strings — do NOT drop them.
+- Fill NaN in ALL string columns with "unknown" before any operations.
+- Fill NaN in numeric columns before using them in interactions or arithmetic.
+- DO NOT use pd.get_dummies() — CatBoost handles categoricals natively.
 - CRITICAL: after defining X, always set:
   cat_cols = [c for c in X.columns if X[c].dtype == 'object']
-  Never manually list cat_cols — auto-detect from dtype to avoid CatBoost crashes.
 
-Script template — the MANDATORY BASELINE section must appear verbatim:
+Script structure you MUST follow:
 ```
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error
@@ -107,28 +106,12 @@ df_test  = pd.read_csv("data/test.csv")
 df_train['last_dt'] = pd.to_datetime(df_train['last_dt'], errors='coerce')
 df_test['last_dt']  = pd.to_datetime(df_test['last_dt'],  errors='coerce')
 
-# MANDATORY — sort train by time so TimeSeriesSplit is actually temporal. DO NOT remove.
+# Sort train by time — required for temporal cross-validation. DO NOT remove.
 df_train = df_train.sort_values('last_dt', na_position='last').reset_index(drop=True)
 
-# ── MANDATORY BASELINE FEATURES (proven ~9550 MSE — do not remove) ────────────
-for df in [df_train, df_test]:
-    df['last_dt_year']  = df['last_dt'].dt.year
-    df['last_dt_month'] = df['last_dt'].dt.month
-    df['last_dt_day']   = df['last_dt'].dt.day
-    df['last_dt_dow']   = df['last_dt'].dt.dayofweek
-    for col in ['name', 'host_name']:
-        s = df[col].fillna('').astype(str)
-        df[f'{col}_len']   = s.str.len()
-        df[f'{col}_words'] = s.str.split().str.len()
-for col in ['name', '_id', 'host_name', 'location_cluster', 'location', 'type_house']:
-    df_train[col] = df_train[col].astype(str).fillna('unknown')
-    df_test[col]  = df_test[col].astype(str).fillna('unknown')
-df_train['avg_reviews'] = df_train['avg_reviews'].fillna(0)
-df_test['avg_reviews']  = df_test['avg_reviews'].fillna(0)
-# ── END MANDATORY BASELINE ────────────────────────────────────────────────────
-
-# ADD extra features from the plan here (apply to both df_train and df_test):
-# <your additional feature engineering>
+# STEP 1 — feature engineering on BOTH df_train AND df_test
+# Apply every new column to both dataframes. Fill NaN before arithmetic.
+# <implement all feature ideas here>
 
 # STEP 2 — define X / y / X_test
 DROP_COLS      = ['target', 'last_dt']

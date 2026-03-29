@@ -50,6 +50,14 @@ def parse_json_response(text: str) -> dict:
 
     try:
         return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Second attempt: fix unescaped backslashes inside string values
+    # (common when LLMs embed Python code with \n, \t, etc. in a JSON string)
+    try:
+        fixed = re.sub(r'(?<!\\)\\(?!["\\/bfnrtu])', r'\\\\', cleaned)
+        return json.loads(fixed)
     except json.JSONDecodeError as exc:
         raise ValueError(
             f"JSON parse error: {exc}. Extracted text:\n{cleaned[:500]}"

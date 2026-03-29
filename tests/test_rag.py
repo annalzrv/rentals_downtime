@@ -12,7 +12,7 @@ from rentals_agents.rag.knowledge_base import build_knowledge_chunks, load_sourc
 
 def test_knowledge_base_documents_load():
     documents = load_source_documents("data/knowledge_base")
-    assert len(documents) >= 8
+    assert len(documents) >= 9
     assert any("CatBoost" in document.title for document in documents)
 
 
