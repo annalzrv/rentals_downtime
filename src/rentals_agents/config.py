@@ -20,7 +20,7 @@ OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 QWEN_CODER_MODEL: str = os.getenv("QWEN_CODER_MODEL", "qwen2.5-coder:7b")
 
 # Model used by RAG_Domain_Expert and Supervisor_Agent (reasoning / text).
-LLM_MODEL: str = os.getenv("LLM_MODEL", "llama3:8b")
+LLM_MODEL: str = os.getenv("LLM_MODEL", "qwen2.5:72b")
 
 # Request timeout in seconds for Ollama API calls.
 OLLAMA_TIMEOUT: float = float(os.getenv("OLLAMA_TIMEOUT", "300.0"))
