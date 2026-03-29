@@ -85,6 +85,7 @@ class ChromaVectorRetriever:
         if chromadb is None:  # pragma: no cover - guarded by service
             raise RuntimeError("chromadb is not installed")
 
+        self._chunks_list = list(chunks)
         self._chunks = {chunk.chunk_id: chunk for chunk in chunks}
         self._embedder = embedding_backend
         self._client = chromadb.PersistentClient(path=persist_dir)
@@ -96,11 +97,21 @@ class ChromaVectorRetriever:
             return []
 
         query_embedding = self._embedder.embed([query])[0]
-        result = self._collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            include=["distances", "metadatas"],
-        )
+        try:
+            result = self._collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                include=["distances", "metadatas"],
+            )
+        except ChromaNotFoundError:
+            # Chroma collection handles may become stale across repeated runs or
+            # external resets; rebuild and retry once instead of failing the loop.
+            self._collection = self._rebuild_collection(self._chunks_list)
+            result = self._collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                include=["distances", "metadatas"],
+            )
 
         ids = result.get("ids", [[]])[0]
         distances = result.get("distances", [[]])[0]
