@@ -18,18 +18,25 @@ from rentals_agents.config import MAX_GRAPH_ITERATIONS, TARGET_MSE_THRESHOLD
 from rentals_agents.state import VALID_NEXT_NODES, State
 
 
+_MAX_CONSECUTIVE_ERRORS = 3
+
+
 def route_after_executor(
     state: State,
 ) -> Literal["Coder_Agent", "Supervisor_Agent"]:
     """
     Deterministic branch after Code_Executor (no LLM involved).
 
-    - execution_ok is False  →  Coder_Agent  (fix the broken code)
-    - execution_ok is True   →  Supervisor_Agent  (evaluate result)
+    - execution_ok is True                          →  Supervisor_Agent
+    - execution_ok is False, streak < 3             →  Coder_Agent (fix the code)
+    - execution_ok is False, streak >= 3            →  Supervisor_Agent
+      (let Supervisor decide: new features via RAG, different approach, or END)
     """
-    if not state.get("execution_ok", False):
-        return "Coder_Agent"
-    return "Supervisor_Agent"
+    if state.get("execution_ok", False):
+        return "Supervisor_Agent"
+    if state.get("consecutive_errors", 0) >= _MAX_CONSECUTIVE_ERRORS:
+        return "Supervisor_Agent"
+    return "Coder_Agent"
 
 
 def route_after_supervisor(

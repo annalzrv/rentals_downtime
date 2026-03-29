@@ -261,6 +261,7 @@ def executor_node(state: State) -> dict:
     Mock: simulates a successful run and extracts the hardcoded MSE from mock code.
     """
     new_iteration_count = state.get("iteration_count", 0) + 1
+    prev_consecutive_errors = state.get("consecutive_errors", 0)
 
     if not config.MOCK_LLM:
         generated_code = state.get("generated_code", "")
@@ -274,6 +275,7 @@ def executor_node(state: State) -> dict:
                 "metrics": {"mse": float("inf")},
                 "mse_history": [float("inf")],
                 "iteration_count": new_iteration_count,
+                "consecutive_errors": prev_consecutive_errors + 1,
             }
 
         work_dir = Path(os.getcwd())
@@ -300,6 +302,7 @@ def executor_node(state: State) -> dict:
                     "metrics": {"mse": float("inf")},
                     "mse_history": [float("inf")],
                     "iteration_count": new_iteration_count,
+                    "consecutive_errors": prev_consecutive_errors + 1,
                 }
 
         output = (result.stdout or "").strip()
@@ -318,6 +321,7 @@ def executor_node(state: State) -> dict:
                 "metrics": {"mse": mse_for_state},
                 "mse_history": [mse_for_state],
                 "iteration_count": new_iteration_count,
+                "consecutive_errors": prev_consecutive_errors + 1,
             }
 
         if not is_mse_finite:
@@ -331,6 +335,7 @@ def executor_node(state: State) -> dict:
                 "metrics": {"mse": float("inf")},
                 "mse_history": [float("inf")],
                 "iteration_count": new_iteration_count,
+                "consecutive_errors": prev_consecutive_errors + 1,
             }
 
         submission_error = _validate_submission_csv(work_dir / "submission.csv")
@@ -345,6 +350,7 @@ def executor_node(state: State) -> dict:
                 "metrics": {"mse": mse_for_state},
                 "mse_history": [mse_for_state],
                 "iteration_count": new_iteration_count,
+                "consecutive_errors": prev_consecutive_errors + 1,
             }
 
         return {
@@ -353,6 +359,7 @@ def executor_node(state: State) -> dict:
             "metrics": {"mse": mse_for_state},
             "mse_history": [mse_for_state],
             "iteration_count": new_iteration_count,
+            "consecutive_errors": 0,
         }
 
     # Mock: extract MSE from the generated code string (works for mock_code above)
@@ -386,9 +393,12 @@ def supervisor_node(state: State) -> dict:
     if not config.MOCK_LLM:
         system = supervisor_system_prompt(config.TARGET_MSE_THRESHOLD, config.MAX_GRAPH_ITERATIONS)
         mse_history = state.get("mse_history", [])
+        consecutive_errors = state.get("consecutive_errors", 0)
         user_msg = (
             f"mse_history: {mse_history}\n"
             f"iteration_count: {state.get('iteration_count', 0)}\n"
+            f"consecutive_errors: {consecutive_errors} "
+            f"({'code keeps failing — consider new features via RAG or END' if consecutive_errors >= 3 else 'ok'})\n"
             f"execution_result (last 500 chars): "
             f"{state.get('execution_result', '')[-500:]}\n"
             f"features_plan (summary): "

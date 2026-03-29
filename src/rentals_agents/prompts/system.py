@@ -95,9 +95,12 @@ Categorical columns guidance:
 to a single column.
 - Pass them directly as strings and list them in CatBoostRegressor's \
 cat_features parameter. CatBoost handles categoricals natively.
-- Example: cat_cols = ["location_cluster", "location", "type_house"] \
-then CatBoostRegressor(..., cat_features=cat_cols)
 - Fill NaN in string columns with "unknown" before passing to CatBoost.
+- CRITICAL: ANY column with dtype object (string) in X must be in cat_cols. \
+If you create new string interaction columns (e.g. borough + "_" + room_type), \
+they are also object dtype — CatBoost will crash if they are not listed in cat_cols. \
+The safest approach: after defining X, set cat_cols = [c for c in X.columns if X[c].dtype == "object"]. \
+Do NOT manually track cat_cols — auto-detect from X.
 
 Cross-validation template you MUST follow:
 ```
@@ -111,6 +114,8 @@ df_train = pd.read_csv("data/train.csv")
 df_test = pd.read_csv("data/test.csv")
 df_train['last_dt'] = pd.to_datetime(df_train['last_dt'], errors='coerce')
 df_test['last_dt'] = pd.to_datetime(df_test['last_dt'], errors='coerce')
+# MANDATORY — sort train by time so TimeSeriesSplit is actually temporal. DO NOT remove.
+df_train = df_train.sort_values('last_dt', na_position='last').reset_index(drop=True)
 
 # STEP 1 — feature engineering on BOTH df_train AND df_test (do NOT use target)
 # Apply every new column to both df_train and df_test before defining X / X_test.
@@ -128,8 +133,8 @@ TEST_DROP_COLS = ['name', '_id', 'host_name', 'last_dt']
 X = df_train.drop(columns=DROP_COLS)
 y = df_train['target'].values
 X_test = df_test.drop(columns=TEST_DROP_COLS)
-# IMPORTANT: keep only cat_cols that actually exist in X after dropping
-cat_cols = [c for c in cat_cols if c in X.columns]
+# Auto-detect all string columns — never pass object dtype as numeric to CatBoost
+cat_cols = [c for c in X.columns if X[c].dtype == "object"]
 
 # STEP 3 — train with TimeSeriesSplit
 model = CatBoostRegressor(iterations=500, learning_rate=0.05, depth=6,

@@ -68,6 +68,10 @@ class State(TypedDict):
     LangGraph's operator.add reducer concatenates automatically.
     """
 
+    # --- Error tracking ---
+    consecutive_errors: int
+    """Number of consecutive executor failures since last success. Reset to 0 on success."""
+
     # --- Debug / logging ---
     supervisor_reasoning: NotRequired[str]
     """Copy of the 'reasoning' field from Supervisor JSON. Optional."""
@@ -87,4 +91,5 @@ def initial_state() -> State:
         iteration_count=0,
         next_node="",
         mse_history=[],
+        consecutive_errors=0,
     )

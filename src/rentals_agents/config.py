@@ -23,7 +23,7 @@ QWEN_CODER_MODEL: str = os.getenv("QWEN_CODER_MODEL", "qwen2.5-coder:7b")
 LLM_MODEL: str = os.getenv("LLM_MODEL", "llama3:8b")
 
 # Request timeout in seconds for Ollama API calls.
-OLLAMA_TIMEOUT: float = float(os.getenv("OLLAMA_TIMEOUT", "120.0"))
+OLLAMA_TIMEOUT: float = float(os.getenv("OLLAMA_TIMEOUT", "300.0"))
 
 # ── Dataset path ─────────────────────────────────────────────────────────────
 # Directory containing train.csv, test.csv, sample_submition.csv
