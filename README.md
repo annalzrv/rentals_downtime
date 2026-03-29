@@ -1,6 +1,6 @@
 # rentals_agents
 
-LangGraph multi-agent pipeline for rental price prediction — HSE Agents course project.
+LangGraph multi-agent pipeline for rental availability / downtime prediction — HSE Agents course project.
 
 ## Architecture
 

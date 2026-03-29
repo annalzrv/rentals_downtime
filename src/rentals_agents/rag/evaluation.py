@@ -29,7 +29,7 @@ def build_rag_user_message(dataset_summary: str, retrieved_context: str) -> str:
         f"Dataset description:\n{dataset_summary}\n\n"
         f"Retrieved domain context:\n{retrieved_context}\n\n"
         "Based on this dataset, suggest feature engineering ideas for "
-        "predicting rental price per night."
+        "predicting rental availability / downtime."
     )
 
 
